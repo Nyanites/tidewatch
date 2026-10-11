@@ -469,16 +469,26 @@ mod tests {
     #[test]
     fn hostile_records_are_bounded() {
         // Deep nesting (would overflow the stack if flattened recursively without a cap).
-        let mut v = serde_json::json!("leaf");
-        for _ in 0..1_500 {
-            v = serde_json::json!({ "a": v });
-        }
-        let mut keys = KeyInterner::default();
-        let json =
-            serde_json::json!({"Event": {"System": {"EventID": 1}, "EventData": {"Deep": v}}});
+        // Built, flattened and dropped on a big-stack thread: serde_json itself recurses.
         let handle = std::thread::Builder::new()
             .stack_size(64 << 20)
-            .spawn(move || build(1, json, &mut keys).fields.len())
+            .spawn(|| {
+                let mut v = Value::String("leaf".into());
+                for _ in 0..1_500 {
+                    let mut m = serde_json::Map::new();
+                    m.insert("a".into(), v);
+                    v = Value::Object(m);
+                }
+                let mut data = serde_json::Map::new();
+                data.insert("Deep".into(), v);
+                let mut event = serde_json::Map::new();
+                event.insert("System".into(), serde_json::json!({"EventID": 1}));
+                event.insert("EventData".into(), Value::Object(data));
+                let mut root = serde_json::Map::new();
+                root.insert("Event".into(), Value::Object(event));
+                let mut keys = KeyInterner::default();
+                build(1, Value::Object(root), &mut keys).fields.len()
+            })
             .unwrap();
         assert!(handle.join().unwrap() >= 1);
 
