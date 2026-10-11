@@ -22,3 +22,6 @@ target/
 .vscode/
 .idea/
 *.ips
+
+# Private local notes (contain personal details)
+*.local.md
