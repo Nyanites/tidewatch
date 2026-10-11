@@ -38,17 +38,21 @@ Open a `.evtx` file pulled from a Windows machine and search, filter and read it
 
 ## Install
 
+**Option 1: one command (recommended).** Open Terminal and paste:
+
+```bash
+curl -fsSL https://nyanites.github.io/tidewatch/install.sh | bash
+```
+
+The [installer](docs/install.sh) downloads the latest release from GitHub, checks it against the published SHA-256 checksum, and copies Tidewatch into Applications. It never asks for your password. Run it again to update. To install a specific version, prefix the command with `TIDEWATCH_VERSION=0.1.0`.
+
+**Option 2: disk image.**
+
 1. Download **[Tidewatch.dmg](https://github.com/Nyanites/tidewatch/releases/latest/download/Tidewatch.dmg)** from the [latest release](https://github.com/Nyanites/tidewatch/releases/latest).
 2. Open the `.dmg` and drag **Tidewatch** onto **Applications**.
-3. Open Tidewatch from Applications or Launchpad.
+3. The first time you open it, macOS says it can't verify the developer, because Tidewatch isn't notarized by Apple. Click **Done**, go to **System Settings → Privacy & Security**, and click **Open Anyway**. You only need to do this once.
 
-**The first time you open it,** macOS may say it can't verify the developer. This happens because the app isn't notarized by Apple. It's a one-time step:
-
-1. Click **Done** in the warning.
-2. Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to *"Tidewatch" was blocked*.
-3. Confirm with **Open Anyway** and your password.
-
-After that it opens normally, and you can double-click any `.evtx` file to view it.
+**Uninstall:** drag Tidewatch from Applications to the Trash.
 
 <details>
 <summary>Build from source instead</summary>
@@ -293,7 +297,7 @@ Built with [`evtx`](https://github.com/omerbenamram/evtx) for parsing, [`egui`/`
 ## Limitations
 
 - **No Windows message text.** Windows builds full messages (e.g. *"An account was successfully logged on…"*) from resource DLLs that only exist on a Windows install. This viewer shows the structured event data instead, plus built-in short descriptions for about 250 common event IDs (Security, System, Sysmon, PowerShell, Task Scheduler, RDP, Defender, Firewall and others).
-- **Not notarized yet.** Until the app is signed with an Apple Developer ID, macOS asks you to approve it once (see [Install](#install)).
+- **Not notarized by Apple.** The one-command installer avoids the first-launch warning; the disk image needs a one-time approval (see [Install](#install)).
 - **One file at a time.** Merging several logs into one timeline isn't supported yet.
 - **Times are shown in UTC**, as stored in the log.
 - **The original file must stay in place** while it's open, because JSON, XML and JSON Lines export are re-read from it.
