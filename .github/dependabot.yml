@@ -4,6 +4,19 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      # eframe, egui and egui_extras must always share one version; update them together.
+      egui:
+        patterns: ["eframe", "egui", "egui_extras", "egui-*"]
+    ignore:
+      # These must match the versions used inside winit (pulled in by eframe), so they can
+      # only move when eframe is upgraded. Patch updates are still fine.
+      - dependency-name: "objc2"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "objc2-*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "block2"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
