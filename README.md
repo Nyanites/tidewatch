@@ -297,7 +297,7 @@ src/
 └── app.rs      UI (egui): toolbar, table, details, summary, filtering, export
 ```
 
-`bundle-macos.sh` packages the app (icon, `.evtx` file association, ad-hoc signing, and with `--zip` the release archive); `scripts/make-icon.sh` regenerates `assets/AppIcon.icns`.
+`bundle-macos.sh` packages the app (icon, `.evtx` file association, ad-hoc signing, and with `--zip` the release archive).
 
 Built with [`evtx`](https://github.com/omerbenamram/evtx) for parsing, [`egui`/`eframe`](https://github.com/emilk/egui) for the UI, [`rayon`](https://github.com/rayon-rs/rayon) for parallelism, and [`regex`](https://github.com/rust-lang/regex) + [`memchr`](https://github.com/BurntSushi/memchr) for searching.
 

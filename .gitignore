@@ -25,3 +25,7 @@ target/
 
 # Private local notes (contain personal details)
 *.local.md
+
+# Local icon generator (the generated icons in assets/ are committed)
+scripts/make-icon.sh
+scripts/make-icon.swift
