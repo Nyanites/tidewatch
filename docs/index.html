@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tidewatch — Windows event log viewer for macOS</title>
+<meta name="description" content="Open, search and hunt through Windows .evtx event logs on your Mac. Fast, native, with built-in threat detections and Sigma rule support.">
+<meta property="og:title" content="Tidewatch">
+<meta property="og:description" content="Windows event log viewer and threat hunting for macOS.">
+<meta property="og:image" content="assets/screenshot-detection.jpg">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src https://api.github.com">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<style>
+  :root {
+    --bg: #f7f8fb;
+    --surface: #ffffff;
+    --text: #141a28;
+    --muted: #5b6478;
+    --border: #e1e5ee;
+    --accent: #1f4fd1;
+    --accent-text: #ffffff;
+    --gold: #b7860b;
+    --code-bg: #eef1f7;
+    --hero-from: #e9eefb;
+    --shadow: 0 20px 50px rgba(20, 30, 60, 0.18);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0f1a;
+      --surface: #121827;
+      --text: #e8ecf5;
+      --muted: #9aa4b8;
+      --border: #222b3f;
+      --accent: #5b8cff;
+      --accent-text: #0b0f1a;
+      --gold: #f2c94c;
+      --code-bg: #182033;
+      --hero-from: #111a33;
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, kbd { font: 0.88em ui-monospace, "SF Mono", Menlo, monospace; background: var(--code-bg); padding: 0.1em 0.4em; border-radius: 5px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  nav { position: sticky; top: 0; z-index: 10; backdrop-filter: saturate(160%) blur(14px); -webkit-backdrop-filter: saturate(160%) blur(14px); background: color-mix(in srgb, var(--bg) 78%, transparent); border-bottom: 1px solid var(--border); }
+  nav .wrap { display: flex; align-items: center; gap: 22px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: var(--text); }
+  .brand img { width: 30px; height: 30px; }
+  nav .links { margin-left: auto; display: flex; gap: 22px; font-size: 15px; }
+  nav .links a { color: var(--muted); }
+  nav .links a:hover { color: var(--text); text-decoration: none; }
+
+  header.hero { background: linear-gradient(180deg, var(--hero-from), var(--bg) 85%); padding: 72px 0 40px; text-align: center; }
+  .hero img.icon { width: 104px; height: 104px; filter: drop-shadow(0 10px 22px rgba(20, 40, 100, 0.28)); }
+  h1 { font-size: clamp(36px, 6vw, 58px); line-height: 1.08; letter-spacing: -0.03em; margin: 18px 0 14px; }
+  .tagline { font-size: clamp(18px, 2.4vw, 21px); color: var(--muted); max-width: 680px; margin: 0 auto 30px; }
+  .cta { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+  .btn { display: inline-flex; align-items: center; gap: 10px; padding: 13px 24px; border-radius: 12px; font-weight: 600; font-size: 16px; border: 1px solid var(--border); color: var(--text); background: var(--surface); }
+  .btn:hover { text-decoration: none; border-color: var(--muted); }
+  .btn.primary { background: var(--accent); color: var(--accent-text); border-color: transparent; box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 35%, transparent); }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn svg { width: 18px; height: 18px; }
+  .meta { margin-top: 14px; font-size: 14px; color: var(--muted); }
+
+  .shot { margin: 48px auto 0; max-width: 1080px; }
+  .shot img { width: 100%; height: auto; display: block; border-radius: 12px; box-shadow: var(--shadow); border: 1px solid var(--border); }
+  .caption { text-align: center; color: var(--muted); font-size: 14px; margin-top: 14px; }
+
+  section { padding: 76px 0; }
+  section + section { border-top: 1px solid var(--border); }
+  h2 { font-size: clamp(26px, 3.6vw, 36px); letter-spacing: -0.02em; margin: 0 0 12px; }
+  .lead { color: var(--muted); font-size: 18px; max-width: 760px; margin: 0 0 36px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 18px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 22px; }
+  .card h3 { margin: 0 0 6px; font-size: 17px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .card .ico { font-size: 22px; margin-bottom: 8px; }
+
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: center; }
+  .split img { width: 100%; border-radius: 12px; box-shadow: var(--shadow); border: 1px solid var(--border); }
+  ul.checks { list-style: none; padding: 0; margin: 0; }
+  ul.checks li { padding: 7px 0 7px 30px; position: relative; color: var(--muted); }
+  ul.checks li strong { color: var(--text); }
+  ul.checks li::before { content: "✓"; position: absolute; left: 0; color: var(--accent); font-weight: 700; }
+
+  table.q { width: 100%; border-collapse: collapse; font-size: 15px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  table.q td { padding: 11px 16px; border-top: 1px solid var(--border); vertical-align: top; }
+  table.q tr:first-child td { border-top: none; }
+  table.q td:first-child { white-space: nowrap; width: 1%; }
+
+  ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; max-width: 760px; }
+  ol.steps li { counter-increment: s; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px 16px 58px; position: relative; }
+  ol.steps li::before { content: counter(s); position: absolute; left: 18px; top: 15px; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--accent-text); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+  .note { margin-top: 22px; max-width: 760px; background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--gold); border-radius: 10px; padding: 14px 18px; color: var(--muted); font-size: 15px; }
+  .note strong { color: var(--text); }
+
+  .license { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+  footer { border-top: 1px solid var(--border); padding: 34px 0 48px; color: var(--muted); font-size: 14px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 14px 28px; justify-content: space-between; }
+
+  @media (max-width: 820px) {
+    .split { grid-template-columns: 1fr; }
+    nav .links a.hide-sm { display: none; }
+  }
+  @media (max-width: 560px) {
+    .wrap { padding: 0 16px; }
+    nav .links { gap: 14px; font-size: 14px; }
+    table.q td:first-child { white-space: normal; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#"><img src="assets/icon.png" alt="">Tidewatch</a>
+    <div class="links">
+      <a href="#features" class="hide-sm">Features</a>
+      <a href="#detections" class="hide-sm">Detections</a>
+      <a href="#install">Install</a>
+      <a href="#license" class="hide-sm">License</a>
+      <a class="repo-link" href="https://github.com/Nyanites/tidewatch">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <img class="icon" src="assets/icon.png" alt="Tidewatch icon">
+    <h1>Windows event logs,<br>read on your Mac.</h1>
+    <p class="tagline">Tidewatch opens <code>.evtx</code> files natively on macOS, searches hundreds of thousands of events in milliseconds, and flags attacker activity like Kerberoasting, DCSync and lateral movement for you.</p>
+    <div class="cta">
+      <a class="btn primary download-link" href="https://github.com/Nyanites/tidewatch/releases/latest/download/Tidewatch.dmg">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 19h16"/></svg>
+        Download for macOS
+      </a>
+      <a class="btn repo-link" href="https://github.com/Nyanites/tidewatch">View source</a>
+    </div>
+    <p class="meta"><span id="version">Latest release</span> · Apple Silicon &amp; Intel · macOS 11 or newer · ~7 MB · free for small teams</p>
+    <div class="shot">
+      <img src="assets/screenshot-detection.jpg" width="1640" height="1000" alt="Tidewatch showing a 'DCSync rights granted' detection, the matching events, and the full details of one event">
+      <p class="caption">A DCSync backdoor flagged in a public attack sample, with the rule's explanation, ATT&amp;CK mapping and every field of the event.</p>
+    </div>
+  </div>
+</header>
+
+<main>
+<section id="features">
+  <div class="wrap">
+    <h2>Built for responders who live on a Mac</h2>
+    <p class="lead">No Windows VM, no Event Viewer, nothing to install besides the app. Drop in a log pulled from a Windows machine and start hunting.</p>
+    <div class="grid">
+      <div class="card"><div class="ico">⚡</div><h3>Fast on huge logs</h3><p>Parses in parallel on every core and searches 500,000 events in a few milliseconds. Rows appear while the file is still loading.</p></div>
+      <div class="card"><div class="ico">🔎</div><h3>Search like an analyst</h3><p>Plain text, phrases, exclusions, field filters like <code>LogonType=3</code>, regex, and match highlighting.</p></div>
+      <div class="card"><div class="ico">🛡</div><h3>Detections built in</h3><p>49 curated rules for credential theft, defense evasion and lateral movement, each explained with false positives and sources.</p></div>
+      <div class="card"><div class="ico">📚</div><h3>Run the Sigma library</h3><p>Import the community Sigma rules folder and run about 2,400 Windows detections over a log in under a second.</p></div>
+      <div class="card"><div class="ico">🧩</div><h3>Readable without Windows</h3><p>Built-in event descriptions and decoded values: logon types, Kerberos encryption, failure codes, well-known SIDs.</p></div>
+      <div class="card"><div class="ico">🧾</div><h3>Nothing hidden</h3><p>Every System, EventData and UserData field, plus raw JSON and XML. Export what you filtered to CSV or JSON Lines.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="detections">
+  <div class="wrap split">
+    <div>
+      <h2>Find the needle, then see why it matters</h2>
+      <p class="lead" style="margin-bottom:22px">Open the <strong>Detections</strong> menu to see every rule that matched, grouped by MITRE ATT&amp;CK tactic and colored by severity. Pick one to filter the log to its hits.</p>
+      <ul class="checks">
+        <li><strong>Credential access:</strong> Kerberoasting, AS-REP roasting, password spraying, DCSync, LSASS access</li>
+        <li><strong>Defense evasion:</strong> cleared logs, disabled auditing, Defender and firewall tampering, AMSI bypass</li>
+        <li><strong>Lateral movement:</strong> PsExec and Impacket, pass-the-hash, RDP tunnelling, admin-share abuse</li>
+        <li><strong>Thresholds that match real tooling:</strong> e.g. more than 10 accounts failing from one IP in 24 hours</li>
+        <li><strong>Credit where it's due:</strong> rules adapted from Sigma and Hayabusa show their original authors</li>
+      </ul>
+    </div>
+    <img src="assets/screenshot-menu.jpg" alt="The Detections menu listing matched rules by tactic and severity" loading="lazy">
+  </div>
+</section>
+
+<section id="search">
+  <div class="wrap">
+    <h2>A query language made for event logs</h2>
+    <p class="lead">Type in the search box; every term must match. Field names work with or without their full path.</p>
+    <table class="q">
+      <tr><td><code>mimikatz</code></td><td>Any field contains the word</td></tr>
+      <tr><td><code>"logon type" -svchost</code></td><td>Exact phrase, excluding events that mention svchost</td></tr>
+      <tr><td><code>id=4769 TicketEncryptionType=rc4-hmac</code></td><td>Kerberos service tickets using RC4 (decoded values work too)</td></tr>
+      <tr><td><code>id=4624 LogonType=10 -IpAddress~"^10\."</code></td><td>RDP logons from outside 10.0.0.0/8</td></tr>
+      <tr><td><code>process~"\\powershell\.exe$" CommandLine:-enc</code></td><td>Encoded PowerShell in Sysmon or Security process events</td></tr>
+    </table>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <h2>Install in a minute</h2>
+    <p class="lead">One download. No Rust, Homebrew or terminal needed.</p>
+    <ol class="steps">
+      <li><strong><a class="download-link" href="https://github.com/Nyanites/tidewatch/releases/latest/download/Tidewatch.dmg">Download Tidewatch.dmg</a></strong> and open it.</li>
+      <li>Drag <strong>Tidewatch</strong> onto the <strong>Applications</strong> folder.</li>
+      <li>Open Tidewatch, then double-click any <code>.evtx</code> file or drag it onto the window.</li>
+    </ol>
+    <div class="note"><strong>First launch:</strong> Tidewatch isn't notarized by Apple yet, so macOS may say it can't verify the developer. Click <strong>Done</strong>, then go to <strong>System Settings → Privacy &amp; Security</strong> and click <strong>Open Anyway</strong>. You only need to do this once.</div>
+  </div>
+</section>
+
+<section id="license">
+  <div class="wrap">
+    <h2>Source-available, free for small teams</h2>
+    <p class="lead">Tidewatch is published under the <a href="https://polyformproject.org/licenses/small-business/1.0.0">PolyForm Small Business License 1.0.0</a>. The full source is on GitHub.</p>
+    <div class="license">
+      <div class="card"><h3>Free</h3><p>For organizations with fewer than 100 people and under US$1M in annual revenue (2019 dollars, inflation-adjusted).</p></div>
+      <div class="card"><h3>Commercial license</h3><p>Larger organizations need a commercial license. <a class="contact-link" href="https://github.com/Nyanites/tidewatch/discussions">Get in touch</a> for terms.</p></div>
+      <div class="card"><h3>Detection rules</h3><p>Rules adapted from Sigma and Hayabusa stay under the Detection Rule License 1.1 with credit to their authors.</p></div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Tidewatch · Windows event log viewer and threat hunting for macOS</span>
+    <span><a class="repo-link" href="https://github.com/Nyanites/tidewatch">Source</a> · <a class="releases-link" href="https://github.com/Nyanites/tidewatch/releases">All releases</a> · <a class="repo-link-license" href="https://github.com/Nyanites/tidewatch/blob/main/LICENSE.md">License</a></span>
+    <span>Not affiliated with Microsoft. Screenshots use public sample logs from EVTX-ATTACK-SAMPLES.</span>
+  </div>
+</footer>
+
+<script>
+  // Show the latest release version; the download links already point at the latest release.
+  (function () {
+    var el = document.getElementById("version");
+    fetch("https://api.github.com/repos/Nyanites/tidewatch/releases/latest", { headers: { Accept: "application/vnd.github+json" } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (rel) {
+        if (rel && typeof rel.tag_name === "string" && /^v?[0-9][0-9A-Za-z.\-]*$/.test(rel.tag_name)) {
+          el.textContent = "Version " + rel.tag_name.replace(/^v/, "");
+        }
+      })
+      .catch(function () {});
+  })();
+</script>
+</body>
+</html>

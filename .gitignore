@@ -1,0 +1,24 @@
+# Build output
+target/
+
+# Never commit event logs or anything that may contain real data
+*.evtx
+*.EVTX
+*.evt
+*.etl
+
+# Release artifacts and signing material
+*.dmg
+*.p12
+*.cer
+*.pem
+*.key
+.env
+.env.*
+
+# Local / editor files
+.DS_Store
+.claude/
+.vscode/
+.idea/
+*.ips
