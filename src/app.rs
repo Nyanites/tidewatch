@@ -177,6 +177,8 @@ pub struct App {
     last_refresh: Instant,
     filter_time: Duration,
     providers: Vec<(String, usize)>,
+    /// Number of records `providers` was counted over (recount only when it changes).
+    providers_counted: usize,
     summary: Option<Summary>,
 
     // Detections: built-in hunting rules, run once a file has finished loading.
@@ -257,6 +259,7 @@ impl App {
             last_refresh: Instant::now(),
             filter_time: Duration::ZERO,
             providers: Vec::new(),
+            providers_counted: usize::MAX,
             summary: None,
             rules: detect::builtin_rules(),
             sigma_rx: None,
@@ -311,6 +314,7 @@ impl App {
         self.hits = None;
         self.hits_for = None;
         self.providers.clear();
+        self.providers_counted = usize::MAX;
         self.provider = None;
         self.summary = None;
         self.detections.clear();
@@ -426,7 +430,13 @@ impl App {
             }
         }
         // While streaming in records, don't refilter on every frame.
-        let interval = if self.records_done { 0 } else { 300 };
+        // While loading, refresh less often on big logs: each refresh re-sorts and re-filters
+        // everything loaded so far and competes with the parser for CPU.
+        let interval = if self.records_done {
+            0
+        } else {
+            (self.records.len() as u64 / 2_500).clamp(300, 2_000)
+        };
         if self.last_refresh.elapsed() < Duration::from_millis(interval) {
             return;
         }
@@ -569,12 +579,15 @@ impl App {
                 .collect()
         };
 
-        if self.providers.is_empty() || !self.records_done || self.summary.is_none() {
+        // Provider counts only change when records arrive; recounting on every keystroke
+        // costs hundreds of milliseconds on multi-million-event logs.
+        if self.providers_counted != records.len() {
             let mut counts: HashMap<&str, usize> = HashMap::new();
             for r in records {
                 *counts.entry(r.provider()).or_default() += 1;
             }
             self.providers = sorted_counts(counts.into_iter().map(|(k, v)| (k.to_string(), v)));
+            self.providers_counted = records.len();
         }
     }
 

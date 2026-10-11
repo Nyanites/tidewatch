@@ -8,7 +8,7 @@ One small app (about 7 MB to download) that runs on Apple Silicon and Intel Macs
 
 Open a `.evtx` file pulled from a Windows machine and search, filter and read its events. You don't need Windows, a VM or Event Viewer. It's built for incident responders and threat hunters who triage logs on a Mac.
 
-- **Fast.** The file is read in parallel on every CPU core. Searching 500,000 events takes a few milliseconds.
+- **Fast.** The file is read in parallel on every CPU core. Searching 5 million events takes about 40 milliseconds ([benchmark](#performance)).
 - **Readable without Windows.** Common event IDs come with built-in descriptions, and codes are decoded inline (logon types, Kerberos encryption types, NTSTATUS failure codes, well-known SIDs, keywords).
 - **Built for searching.** Plain text, quoted phrases, exclusions, field-scoped matches and full regex, with matches highlighted in the event details.
 - **Finds suspicious activity for you.** Built-in detections flag things like Kerberoasting, password spraying, DCSync, lateral movement, cleared logs and Defender tampering, and you can import the full [Sigma](https://github.com/SigmaHQ/sigma) rule library (thousands of community rules) in two clicks.
@@ -247,16 +247,27 @@ Click any entry to filter by it.
 
 ## Performance
 
-Measured on an Apple M4 Pro (14 cores), using real Security log events copied up to 500,000 records (434 MB of searchable text):
+A 3.9 GB log with **5,039,642 events**, measured on an Apple M4 Pro (14 cores, 48 GB RAM), macOS 26, Tidewatch 0.1.2. Median of three runs, with the file already in the disk cache.
 
-| Operation | Time |
+| Operation | Result |
 | --- | --- |
-| Plain text search (`admin`) | 5 ms |
-| Field search (`TargetUserName:admin`) | 6 ms |
-| Case-sensitive search | 7 ms |
-| Regex (`^ServiceName=.*\$$`) | 24 ms |
-| Re-sort by time | 10 ms |
-| Memory | about 3.5 KB per event (about 1.7 GB for 500k events) |
+| Open the file (parse every event, build the search index) | 15.5 s in the engine, 17.5–18.3 s in the app (about 250 MB/s) |
+| First events on screen | 31 ms |
+| Search: word `administrator` | 43 ms (29,503 hits) |
+| Search: field `TargetUserName:admin` | 40 ms (20,457 hits) |
+| Search: `id=4624 LogonType=2 -TargetUserName~"\$$"` | 49 ms (186,800 hits) |
+| Search: regex `^SubjectUserName=.*\$$` | 185 ms (3,412,454 hits) |
+| Sort all events by time | 133 ms |
+| Run the 49 built-in detections | 0.41 s |
+| Run 2,452 detections (built-in plus the full Sigma library) | 0.95 s |
+| Peak memory | 15.4 GB (about 3 KB per event) |
+
+**About the test file:** large public event logs are rare, so it repeats the 64 KB chunks of public sample logs: the [evtx](https://github.com/omerbenamram/evtx) project's `samples/security.evtx`, with one chunk in 50 taken from [EVTX-ATTACK-SAMPLES](https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES) logs. Every event is real Windows event data; only the repetition is synthetic. To reproduce:
+
+```bash
+python3 scripts/make-big-evtx.py big.evtx security.evtx attack-samples/*.evtx --chunks 59000
+EVTX_BIG=big.evtx SIGMA_DIR=path/to/sigma/rules cargo test --release bench_large -- --ignored --nocapture
+```
 
 What keeps it fast:
 

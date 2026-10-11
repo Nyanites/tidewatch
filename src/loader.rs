@@ -512,3 +512,144 @@ mod corpus {
         assert!(panics.is_empty(), "parser panicked on: {panics:#?}");
     }
 }
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+    use crate::search::{Query, SearchOptions};
+    use std::time::Instant;
+
+    /// End-to-end benchmark through the app's own loader, search and detection code.
+    /// `EVTX_BIG=big.evtx [SIGMA_DIR=sigma/rules] cargo test --release bench_large -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_large() {
+        let Ok(path) = std::env::var("EVTX_BIG") else {
+            return;
+        };
+        let path = PathBuf::from(path);
+        let size = std::fs::metadata(&path).unwrap().len();
+        let ctx = eframe::egui::Context::default();
+
+        let t = Instant::now();
+        let rx = spawn(path.clone(), ctx);
+        let (mut records, mut keys, mut first, mut errors) = (Vec::new(), Vec::new(), None, 0usize);
+        for msg in rx {
+            match msg {
+                Msg::Records {
+                    records: r,
+                    new_keys,
+                } => {
+                    if first.is_none() && !r.is_empty() {
+                        first = Some(t.elapsed());
+                    }
+                    records.extend(r);
+                    keys.extend(new_keys);
+                }
+                Msg::RecordError(_) => errors += 1,
+                Msg::Fatal(e) => panic!("{e}"),
+                Msg::Done => break,
+                Msg::Info(_) => {}
+            }
+        }
+        let load = t.elapsed();
+        let keys_lc: Vec<Box<str>> = keys.iter().map(|k| k.to_lowercase().into()).collect();
+        let n = records.len();
+        let mb = size as f64 / 1e6;
+        println!("| File | {:.2} GB, {} events |", size as f64 / 1e9, fmt(n));
+        println!(
+            "| First rows on screen | {:.0} ms |",
+            first.unwrap().as_secs_f64() * 1000.0
+        );
+        println!(
+            "| Full load | {:.2} s ({:.0} MB/s, {:.2} M events/s) |",
+            load.as_secs_f64(),
+            mb / load.as_secs_f64(),
+            n as f64 / 1e6 / load.as_secs_f64()
+        );
+        println!("| Corrupt records | {errors} |");
+
+        use rayon::prelude::*;
+        let time_query = |label: &str, q: &str, opts: SearchOptions| {
+            let query = Query::compile(q, opts, &keys_lc).unwrap();
+            let t = Instant::now();
+            let hits = records
+                .par_iter()
+                .filter(|r| query.matches(r, opts, &keys_lc))
+                .count();
+            println!(
+                "| Search: {label} `{q}` | {:.0} ms, {} hits |",
+                t.elapsed().as_secs_f64() * 1000.0,
+                fmt(hits)
+            );
+        };
+        let text = SearchOptions {
+            regex: false,
+            case_sensitive: false,
+        };
+        let re = SearchOptions {
+            regex: true,
+            case_sensitive: false,
+        };
+        time_query("word", "administrator", text);
+        time_query("field", "TargetUserName:admin", text);
+        time_query(
+            "combined",
+            r#"id=4624 LogonType=2 -TargetUserName~"\$$""#,
+            text,
+        );
+        time_query("regex", r"^SubjectUserName=.*\$$", re);
+
+        let t = Instant::now();
+        let mut order: Vec<u32> = (0..n as u32).collect();
+        order.par_sort_by(|&a, &b| {
+            records[a as usize]
+                .timestamp
+                .cmp(&records[b as usize].timestamp)
+        });
+        println!(
+            "| Sort by time | {:.0} ms |",
+            t.elapsed().as_secs_f64() * 1000.0
+        );
+
+        let mut rules = crate::detect::builtin_rules();
+        let t = Instant::now();
+        let (hits, _) = crate::detect::run(&rules, &records, &keys_lc);
+        println!(
+            "| Detections: {} built-in rules | {:.2} s, {} rules matched, {} events flagged |",
+            rules.len(),
+            t.elapsed().as_secs_f64(),
+            hits.len(),
+            fmt(hits.iter().map(|h| h.records.len()).sum())
+        );
+        if let Ok(dir) = std::env::var("SIGMA_DIR") {
+            let report = crate::sigma::load_dir(Path::new(&dir));
+            rules.extend(
+                report
+                    .rules
+                    .into_iter()
+                    .map(|r| crate::detect::DetRule::from_sigma(r, report.drl)),
+            );
+            let t = Instant::now();
+            let (hits, _) = crate::detect::run(&rules, &records, &keys_lc);
+            println!(
+                "| Detections: {} rules (built-in + Sigma) | {:.2} s, {} rules matched |",
+                fmt(rules.len()),
+                t.elapsed().as_secs_f64(),
+                hits.len()
+            );
+        }
+    }
+
+    fn fmt(n: usize) -> String {
+        let s = n.to_string();
+        let mut out = String::new();
+        for (i, c) in s.chars().enumerate() {
+            if i > 0 && (s.len() - i).is_multiple_of(3) {
+                out.push(',');
+            }
+            out.push(c);
+        }
+        out
+    }
+}

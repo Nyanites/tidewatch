@@ -115,6 +115,13 @@
   h3.opt { margin: 34px 0 14px; font-size: 19px; }
   h3.opt .tag { font-size: 12px; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 2px 8px; margin-left: 6px; vertical-align: 2px; }
   kbd { border: 1px solid var(--border); border-bottom-width: 2px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin: 0 0 30px; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px 18px; text-align: center; }
+  .stat .num { font-size: clamp(30px, 4vw, 40px); font-weight: 750; letter-spacing: -0.02em; color: var(--accent); line-height: 1.1; }
+  .stat .lbl { color: var(--muted); font-size: 14px; margin-top: 6px; }
+  img.proof { width: 100%; height: auto; display: block; border-radius: 12px; box-shadow: var(--shadow); border: 1px solid var(--border); }
+  table.bench { margin-top: 26px; }
+  table.bench td:first-child { white-space: normal; width: 55%; }
   .license { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
   footer { border-top: 1px solid var(--border); padding: 34px 0 48px; color: var(--muted); font-size: 14px; }
   footer .wrap { display: flex; flex-wrap: wrap; gap: 14px 28px; justify-content: space-between; }
@@ -138,6 +145,7 @@
     <div class="links">
       <a href="#features" class="hide-sm">Features</a>
       <a href="#detections" class="hide-sm">Detections</a>
+      <a href="#performance" class="hide-sm">Performance</a>
       <a href="#install">Install</a>
       <a href="#license" class="hide-sm">License</a>
       <a class="repo-link" href="https://github.com/Nyanites/tidewatch">GitHub</a>
@@ -149,7 +157,7 @@
   <div class="wrap">
     <img class="icon" src="assets/icon.png" alt="Tidewatch icon">
     <h1>Windows event logs,<br>read on your Mac.</h1>
-    <p class="tagline">Tidewatch opens <code>.evtx</code> files natively on macOS, searches hundreds of thousands of events in milliseconds, and flags attacker activity like Kerberoasting, DCSync and lateral movement for you.</p>
+    <p class="tagline">Tidewatch opens <code>.evtx</code> files natively on macOS, searches millions of events in milliseconds, and flags attacker activity like Kerberoasting, DCSync and lateral movement for you.</p>
     <p class="install-hint">Install with one command in Terminal:</p>
     <div class="cmd" role="group" aria-label="Install command">
         <code id="install-cmd">curl -fsSL https://nyanites.github.io/tidewatch/install.sh | bash</code>
@@ -172,7 +180,7 @@
     <h2>Built for responders who live on a Mac</h2>
     <p class="lead">No Windows VM, no Event Viewer, nothing to install besides the app. Drop in a log pulled from a Windows machine and start hunting.</p>
     <div class="grid">
-      <div class="card"><div class="ico">⚡</div><h3>Fast on huge logs</h3><p>Parses in parallel on every core and searches 500,000 events in a few milliseconds. Rows appear while the file is still loading.</p></div>
+      <div class="card"><div class="ico">⚡</div><h3>Fast on huge logs</h3><p>Parses in parallel on every core and searches 5 million events in about 40 ms. Rows appear while the file is still loading.</p></div>
       <div class="card"><div class="ico">🔎</div><h3>Search like an analyst</h3><p>Plain text, phrases, exclusions, field filters like <code>LogonType=3</code>, regex, and match highlighting.</p></div>
       <div class="card"><div class="ico">🛡</div><h3>Detections built in</h3><p>49 curated rules for credential theft, defense evasion and lateral movement, each explained with false positives and sources.</p></div>
       <div class="card"><div class="ico">📚</div><h3>Run the Sigma library</h3><p>Import the community Sigma rules folder and run about 2,400 Windows detections over a log in under a second.</p></div>
@@ -196,6 +204,34 @@
       </ul>
     </div>
     <img src="assets/screenshot-menu.jpg" alt="The Detections menu listing matched rules by tactic and severity" loading="lazy">
+  </div>
+</section>
+
+<section id="performance">
+  <div class="wrap">
+    <h2>Five million events, measured</h2>
+    <p class="lead">We loaded a 3.9 GB log with 5,039,642 events into Tidewatch and timed every step. Search stays interactive and every detection rule runs in under a second.</p>
+    <div class="stats">
+      <div class="stat"><div class="num">18 s</div><div class="lbl">to open 5 million events<br>(3.9 GB)</div></div>
+      <div class="stat"><div class="num">43 ms</div><div class="lbl">to search all of them</div></div>
+      <div class="stat"><div class="num">&lt; 1 s</div><div class="lbl">to run 2,452 detection rules</div></div>
+      <div class="stat"><div class="num">31 ms</div><div class="lbl">until the first events appear</div></div>
+    </div>
+    <img class="proof" src="assets/benchmark-5m.jpg" width="1640" height="1000" loading="lazy" alt="Tidewatch with a 5,039,642-event log open; the status bar reads '29,503 of 5,039,642 events, filtered in 43 ms, parsed in 17.54 s'">
+    <p class="caption">The status bar tells the story: 29,503 matches found among 5,039,642 events in 43 ms, after parsing the file in 17.5 seconds.</p>
+    <table class="q bench">
+      <tr><td>Open the file (parse every event, build the search index)</td><td>15.5 s in the engine · 17.5–18.3 s in the app · about 250 MB/s</td></tr>
+      <tr><td>First events on screen</td><td>31 ms</td></tr>
+      <tr><td>Search: word <code>administrator</code></td><td>43 ms · 29,503 hits</td></tr>
+      <tr><td>Search: field <code>TargetUserName:admin</code></td><td>40 ms · 20,457 hits</td></tr>
+      <tr><td>Search: combined <code>id=4624 LogonType=2 -TargetUserName~"\$$"</code></td><td>49 ms · 186,800 hits</td></tr>
+      <tr><td>Search: regex <code>^SubjectUserName=.*\$$</code></td><td>185 ms · 3,412,454 hits</td></tr>
+      <tr><td>Sort all events by time</td><td>133 ms</td></tr>
+      <tr><td>Run 49 built-in detections</td><td>0.41 s</td></tr>
+      <tr><td>Run 2,452 detections (built-in + full Sigma library)</td><td>0.95 s</td></tr>
+      <tr><td>Peak memory</td><td>15.4 GB (about 3 KB per event)</td></tr>
+    </table>
+    <div class="note"><strong>How we tested.</strong> Apple M4 Pro (14 cores, 48 GB RAM), macOS 26, Tidewatch 0.1.2, median of three runs with the file already in the disk cache. Big public event logs are rare, so the test file repeats the 64 KB chunks of public sample logs (<a href="https://github.com/omerbenamram/evtx">evtx</a> project Security log, plus <a href="https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES">EVTX-ATTACK-SAMPLES</a> attack logs): every event is real Windows data, only the repetition is synthetic. Reproduce it with <a href="https://github.com/Nyanites/tidewatch/blob/main/scripts/make-big-evtx.py">scripts/make-big-evtx.py</a> and the <a href="https://github.com/Nyanites/tidewatch#performance">benchmark command in the README</a>.</div>
   </div>
 </section>
 
