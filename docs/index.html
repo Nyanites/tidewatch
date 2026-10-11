@@ -3,11 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tidewatch — Windows event log viewer for macOS</title>
-<meta name="description" content="Open, search and hunt through Windows .evtx event logs on your Mac. Fast, native, with built-in threat detections and Sigma rule support.">
-<meta property="og:title" content="Tidewatch">
-<meta property="og:description" content="Windows event log viewer and threat hunting for macOS.">
-<meta property="og:image" content="assets/screenshot-detection.jpg">
+<title>Tidewatch: Windows Event Viewer for Mac | Open EVTX Files on macOS</title>
+<meta name="description" content="Open and search Windows .evtx event logs on your Mac. Tidewatch is a fast, native EVTX viewer for macOS with threat detections, Sigma rules and MITRE ATT&amp;CK mapping. No Windows VM needed.">
+<meta name="keywords" content="evtx viewer mac, windows event viewer for mac, open evtx file macos, evtx parser, event log viewer, sigma rules, threat hunting, dfir">
+<link rel="canonical" href="https://nyanites.github.io/tidewatch/">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Tidewatch">
+<meta property="og:url" content="https://nyanites.github.io/tidewatch/">
+<meta property="og:title" content="Tidewatch: Windows Event Viewer for Mac">
+<meta property="og:description" content="Open, search and threat-hunt Windows .evtx event logs natively on macOS. 5 million events searched in 43 ms.">
+<meta property="og:image" content="https://nyanites.github.io/tidewatch/assets/screenshot-detection.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Tidewatch: Windows Event Viewer for Mac">
+<meta name="twitter:description" content="Open, search and threat-hunt Windows .evtx event logs natively on macOS.">
+<meta name="twitter:image" content="https://nyanites.github.io/tidewatch/assets/screenshot-detection.jpg">
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "Tidewatch", "alternateName": ["Tidewatch EVTX Viewer", "Windows Event Viewer for Mac"], "description": "Native macOS viewer for Windows .evtx event logs, with fast search, built-in threat detections and Sigma rule support.", "applicationCategory": "SecurityApplication", "applicationSubCategory": "Log viewer, digital forensics, threat hunting", "operatingSystem": "macOS 11 or later", "url": "https://nyanites.github.io/tidewatch/", "downloadUrl": "https://github.com/Nyanites/tidewatch", "codeRepository": "https://github.com/Nyanites/tidewatch", "image": "https://nyanites.github.io/tidewatch/assets/screenshot-detection.jpg", "screenshot": "https://nyanites.github.io/tidewatch/assets/screenshot-detection.jpg", "softwareVersion": "0.1.2", "author": {"@type": "Person", "name": "Nyanites", "url": "https://github.com/Nyanites"}, "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD", "description": "Free for small teams"}, "featureList": ["Open Windows .evtx event logs on macOS", "Search millions of events in milliseconds", "49 built-in threat detections mapped to MITRE ATT&CK", "Import and run Sigma rules", "Decodes logon types, Kerberos codes and SIDs", "Export to CSV and JSON Lines", "Runs locally with no telemetry"]}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How do I open an EVTX file on a Mac?", "acceptedAnswer": {"@type": "Answer", "text": "macOS can't open Windows .evtx event logs on its own. Install Tidewatch, then double-click any .evtx file or drag it onto the Tidewatch window. It reads Security, System, Application, Sysmon, PowerShell and any other Windows event log natively, with no Windows VM."}}, {"@type": "Question", "name": "Is there a Windows Event Viewer for Mac?", "acceptedAnswer": {"@type": "Answer", "text": "Microsoft's Event Viewer only runs on Windows. Tidewatch is a native macOS alternative: it shows every event and field like Event Viewer, and adds fast search, threat detections and Sigma rules."}}, {"@type": "Question", "name": "Can Tidewatch handle very large event logs?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. In our benchmark a 3.9 GB log with 5,039,642 events opened in 18 seconds, every search took about 40 ms, and 2,452 detection rules ran in under a second on an Apple M4 Pro."}}, {"@type": "Question", "name": "Does Tidewatch support Sigma rules?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Point it at a folder of Sigma rules, such as the SigmaHQ repository, and about 2,400 Windows detections run alongside the 49 built-in rules, mapped to MITRE ATT&CK."}}, {"@type": "Question", "name": "Does Tidewatch upload my logs anywhere?", "acceptedAnswer": {"@type": "Answer", "text": "No. Everything runs locally on your Mac: no uploads, no telemetry and no account. The source code is public on GitHub so you can verify it."}}, {"@type": "Question", "name": "Is Tidewatch free?", "acceptedAnswer": {"@type": "Answer", "text": "Tidewatch is free for small teams: organizations with fewer than 100 people and under US$1M in revenue, under the PolyForm Small Business License. Larger organizations need a commercial license."}}, {"@type": "Question", "name": "Does Tidewatch run on Windows or Linux?", "acceptedAnswer": {"@type": "Answer", "text": "Tidewatch runs on macOS 11 or newer, on Apple Silicon and Intel Macs. A Windows version is coming soon."}}]}</script>
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src https://api.github.com">
 <link rel="icon" type="image/png" href="assets/favicon.png">
 <style>
@@ -122,6 +134,11 @@
   img.proof { width: 100%; height: auto; display: block; border-radius: 12px; box-shadow: var(--shadow); border: 1px solid var(--border); }
   table.bench { margin-top: 26px; }
   table.bench td:first-child { white-space: normal; width: 55%; }
+  .eyebrow { margin: -4px 0 18px; color: var(--accent); font-weight: 600; font-size: 15px; letter-spacing: .02em; }
+  .faqs { display: grid; gap: 12px; max-width: 860px; }
+  details.faq { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; }
+  details.faq summary { cursor: pointer; font-weight: 600; font-size: 17px; }
+  details.faq p { margin: 10px 0 2px; color: var(--muted); }
   .license { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
   footer { border-top: 1px solid var(--border); padding: 34px 0 48px; color: var(--muted); font-size: 14px; }
   footer .wrap { display: flex; flex-wrap: wrap; gap: 14px 28px; justify-content: space-between; }
@@ -155,8 +172,9 @@
 
 <header class="hero">
   <div class="wrap">
-    <img class="icon" src="assets/icon.png" alt="Tidewatch icon">
+    <img class="icon" src="assets/icon.png" alt="Tidewatch, a Windows event log viewer for Mac">
     <h1>Windows event logs,<br>read on your Mac.</h1>
+    <p class="eyebrow">The Windows Event Viewer alternative for macOS · EVTX viewer and threat-hunting tool</p>
     <p class="tagline">Tidewatch opens <code>.evtx</code> files natively on macOS, searches millions of events in milliseconds, and flags attacker activity like Kerberoasting, DCSync and lateral movement for you.</p>
     <p class="install-hint">Install with one command in Terminal:</p>
     <div class="cmd" role="group" aria-label="Install command">
@@ -265,6 +283,21 @@
     </ol>
     <div class="note"><strong>What the command does:</strong> downloads the latest release from GitHub, checks it against the published SHA-256 checksum, and copies Tidewatch into Applications. It never asks for your password. <a href="install.sh">Read the script</a> before running it if you like. Run it again any time to update. To uninstall, drag Tidewatch from Applications to the Trash.</div>
 
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <h2>Frequently asked questions</h2>
+    <div class="faqs">
+      <details class="faq"><summary>How do I open an EVTX file on a Mac?</summary><p>macOS can't open Windows .evtx event logs on its own. Install Tidewatch, then double-click any .evtx file or drag it onto the Tidewatch window. It reads Security, System, Application, Sysmon, PowerShell and any other Windows event log natively, with no Windows VM.</p></details>
+      <details class="faq"><summary>Is there a Windows Event Viewer for Mac?</summary><p>Microsoft's Event Viewer only runs on Windows. Tidewatch is a native macOS alternative: it shows every event and field like Event Viewer, and adds fast search, threat detections and Sigma rules.</p></details>
+      <details class="faq"><summary>Can Tidewatch handle very large event logs?</summary><p>Yes. In our benchmark a 3.9 GB log with 5,039,642 events opened in 18 seconds, every search took about 40 ms, and 2,452 detection rules ran in under a second on an Apple M4 Pro.</p></details>
+      <details class="faq"><summary>Does Tidewatch support Sigma rules?</summary><p>Yes. Point it at a folder of Sigma rules, such as the SigmaHQ repository, and about 2,400 Windows detections run alongside the 49 built-in rules, mapped to MITRE ATT&amp;CK.</p></details>
+      <details class="faq"><summary>Does Tidewatch upload my logs anywhere?</summary><p>No. Everything runs locally on your Mac: no uploads, no telemetry and no account. The source code is public on GitHub so you can verify it.</p></details>
+      <details class="faq"><summary>Is Tidewatch free?</summary><p>Tidewatch is free for small teams: organizations with fewer than 100 people and under US$1M in revenue, under the PolyForm Small Business License. Larger organizations need a commercial license.</p></details>
+      <details class="faq"><summary>Does Tidewatch run on Windows or Linux?</summary><p>Tidewatch runs on macOS 11 or newer, on Apple Silicon and Intel Macs. A Windows version is coming soon.</p></details>
+    </div>
   </div>
 </section>
 

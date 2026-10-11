@@ -1,0 +1,20 @@
+# Tidewatch
+
+> Tidewatch is a native macOS application for opening, searching and threat-hunting Windows event logs (.evtx files). It is a Windows Event Viewer alternative for Mac, aimed at threat hunters, DFIR and incident responders, SOC analysts and threat intelligence researchers.
+
+- Platform: macOS 11 or newer (Apple Silicon and Intel). A Windows version is coming soon. It does not run on Linux.
+- Opens any Windows event log: Security, System, Application, Sysmon, PowerShell and others.
+- Performance: a 3.9 GB log with 5,039,642 events opens in 18 seconds; searches take about 40 ms; 2,452 detection rules run in under a second (Apple M4 Pro).
+- 49 built-in detections mapped to MITRE ATT&CK, including Kerberoasting, AS-REP roasting, password spraying, DCSync, pass-the-hash, PsExec and Impacket lateral movement, log clearing and Microsoft Defender tampering.
+- Imports Sigma rules (about 2,400 Windows rules from SigmaHQ), validated against Sigma's official test logs.
+- Query language with field filters, exclusions, phrases and regex; decodes logon types, Kerberos status codes and well-known SIDs.
+- Exports filtered events to CSV and JSON Lines.
+- Runs entirely locally: no uploads, no telemetry, no account.
+- Source code is public on GitHub. License: PolyForm Small Business 1.0.0 (free for organizations under 100 people and US$1M revenue; commercial license for larger ones).
+- Install: `curl -fsSL https://nyanites.github.io/tidewatch/install.sh | bash`
+
+## Links
+
+- [Website](https://nyanites.github.io/tidewatch/)
+- [Source code and documentation](https://github.com/Nyanites/tidewatch)
+- [Releases](https://github.com/Nyanites/tidewatch/releases)

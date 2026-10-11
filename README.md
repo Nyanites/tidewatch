@@ -1,6 +1,6 @@
 # Tidewatch
 
-A fast, native Windows Event Log (`.evtx`) viewer and threat-hunting tool for macOS, written in Rust.
+**The Windows Event Viewer alternative for Mac.** Tidewatch is a fast, native EVTX viewer and threat-hunting tool for macOS: open, search and analyze Windows `.evtx` event logs without a Windows VM. Written in Rust.
 
 **Install** (paste into Terminal): `curl -fsSL https://nyanites.github.io/tidewatch/install.sh | bash` · [Website](https://nyanites.github.io/tidewatch/)
 
@@ -358,6 +358,18 @@ Releases are built by GitHub Actions ([`.github/workflows/release.yml`](.github/
 2. Tag and push: `git tag v0.1.1 && git push origin v0.1.1`
 
 The workflow builds the universal app, packages it as `Tidewatch-<version>.zip` plus a stable-named `Tidewatch.zip` (what the installer downloads) with a `SHA256SUMS.txt`, and attaches them to a new GitHub Release with generated notes. It refuses to run if the tag doesn't match the `Cargo.toml` version. Every push and pull request also runs formatting, clippy and tests ([`ci.yml`](.github/workflows/ci.yml)).
+
+## FAQ
+
+**How do I open an EVTX file on a Mac?** macOS can't read Windows `.evtx` event logs on its own. Install Tidewatch, then double-click any `.evtx` file or drag it onto the window. It reads Security, System, Application, Sysmon, PowerShell and any other Windows event log.
+
+**Is there a Windows Event Viewer for Mac?** Microsoft's Event Viewer only runs on Windows. Tidewatch is a native macOS alternative that shows every event and field, and adds fast search, threat detections and Sigma rules.
+
+**Can it handle large logs?** Yes: 5,039,642 events (3.9 GB) open in 18 seconds and search in about 40 ms. See [Performance](#performance).
+
+**Does it upload my logs?** No. Everything runs locally, with no telemetry or account.
+
+**Does it run on Windows or Linux?** It runs on macOS 11 or newer (Apple Silicon and Intel). A Windows version is coming soon.
 
 ## License
 
