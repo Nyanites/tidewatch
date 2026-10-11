@@ -372,3 +372,7 @@ The built-in detection rules are adapted from [Sigma](https://github.com/SigmaHQ
 ### Contributing
 
 Contributions are welcome. Because Tidewatch is also offered under commercial licenses, contributors will be asked to agree to a contributor license agreement before a pull request can be merged.
+
+---
+
+Tidewatch is not affiliated with Microsoft or Apple. Windows is a trademark of Microsoft Corporation; Mac and macOS are trademarks of Apple Inc.
