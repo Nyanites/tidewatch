@@ -24,7 +24,7 @@ yaml_serde = "0.10"
 
 # Finder "open file" support. Versions match what winit uses, so nothing is built twice.
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.5"
+objc2 = "0.6"
 block2 = "0.5"
 objc2-foundation = { version = "0.2", features = ["NSArray", "NSNotification", "NSOperation", "NSString", "NSURL", "NSThread", "block2"] }
 objc2-app-kit = { version = "0.2", features = ["NSApplication", "NSResponder"] }
