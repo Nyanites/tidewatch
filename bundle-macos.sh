@@ -1,22 +1,18 @@
 #!/usr/bin/env bash
-# Build "Tidewatch.app" (and optionally a .dmg installer).
+# Build "Tidewatch.app" (and optionally the release archive used by the installer).
 #
-# Usage: ./bundle-macos.sh [--universal] [--dmg]
+# Usage: ./bundle-macos.sh [--universal] [--zip]
 #   --universal   one binary for Apple Silicon + Intel
-#   --dmg         also create target/Tidewatch-<version>.dmg (drag-to-Applications installer)
-#
-# Signing (optional, used by the release workflow):
-#   MACOS_SIGN_IDENTITY  "Developer ID Application: Name (TEAMID)"; otherwise the app is ad-hoc signed
-#   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD  also notarize the .dmg so Gatekeeper opens it without warnings
+#   --zip         also create target/Tidewatch-<version>.zip (what docs/install.sh downloads)
 set -euo pipefail
 cd "$(dirname "$0")"
 
 UNIVERSAL=0
-DMG=0
+ZIP=0
 for arg in "$@"; do
     case "$arg" in
         --universal) UNIVERSAL=1 ;;
-        --dmg) DMG=1 ;;
+        --zip) ZIP=1 ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
 done
@@ -89,30 +85,14 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-if [[ -n "${MACOS_SIGN_IDENTITY:-}" ]]; then
-    codesign --force --options runtime --timestamp --sign "$MACOS_SIGN_IDENTITY" "$APP"
-else
-    # Ad-hoc signature: required to run on Apple Silicon, but not trusted by Gatekeeper.
-    codesign --force --options runtime --sign - "$APP"
-fi
+# Ad-hoc signature with the hardened runtime: required to run on Apple Silicon.
+codesign --force --options runtime --sign - "$APP"
 echo "Built: $APP"
 
-if [[ $DMG == 1 ]]; then
-    DMG_PATH="target/Tidewatch-$VERSION.dmg"
-    STAGE=$(mktemp -d)
-    trap 'rm -rf "$STAGE"' EXIT
-    cp -R "$APP" "$STAGE/"
-    ln -s /Applications "$STAGE/Applications"
-    rm -f "$DMG_PATH"
-    hdiutil create -volname "$NAME" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG_PATH" >/dev/null
-    rm -rf "$STAGE"
-    if [[ -n "${MACOS_SIGN_IDENTITY:-}" ]]; then
-        codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$DMG_PATH"
-    fi
-    if [[ -n "${MACOS_SIGN_IDENTITY:-}" && -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" && -n "${APPLE_APP_PASSWORD:-}" ]]; then
-        xcrun notarytool submit "$DMG_PATH" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
-            --password "$APPLE_APP_PASSWORD" --wait
-        xcrun stapler staple "$DMG_PATH"
-    fi
-    echo "Built: $DMG_PATH"
+if [[ $ZIP == 1 ]]; then
+    ZIP_PATH="target/Tidewatch-$VERSION.zip"
+    rm -f "$ZIP_PATH"
+    # ditto keeps the bundle's code signature and metadata intact.
+    ditto -c -k --keepParent "$APP" "$ZIP_PATH"
+    echo "Built: $ZIP_PATH"
 fi

@@ -1,14 +1,8 @@
-# Builds the universal macOS app and attaches Tidewatch-<version>.dmg to a GitHub Release.
+# Builds the universal macOS app and attaches Tidewatch-<version>.zip, a stable-named
+# Tidewatch.zip (what docs/install.sh downloads) and SHA256SUMS.txt to a GitHub Release.
 #
 # To publish a release:   bump `version` in Cargo.toml, then
-#                         git tag v0.1.0 && git push origin v0.1.0
-#
-# Optional repository secrets (Settings → Secrets and variables → Actions). Without them the
-# app is ad-hoc signed and users approve it once under System Settings → Privacy & Security.
-#   MACOS_CERTIFICATE           base64 of your "Developer ID Application" .p12 export
-#   MACOS_CERTIFICATE_PASSWORD  password of that .p12
-#   MACOS_SIGN_IDENTITY         e.g. "Developer ID Application: Your Name (TEAMID)"
-#   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD   for notarization (app-specific password)
+#                         git tag v0.1.1 && git push origin v0.1.1
 name: Release
 
 on:
@@ -22,8 +16,7 @@ permissions:
 jobs:
   build:
     runs-on: macos-latest
-    # Signing secrets live in this environment; add required reviewers to it under
-    # Settings → Environments so nobody can sign a build without approval.
+    # Only release tags (v*) may run in this environment.
     environment: release
     permissions:
       contents: write
@@ -39,42 +32,18 @@ jobs:
             exit 1
           fi
 
-      - name: Import signing certificate
-        # Only sign builds of release tags, never arbitrary branches.
-        if: startsWith(github.ref, 'refs/tags/v') && env.MACOS_CERTIFICATE != ''
-        env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      - name: Build app and archive
         run: |
-          keychain="$RUNNER_TEMP/build.keychain"
-          keychain_password=$(openssl rand -hex 16)
-          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          security create-keychain -p "$keychain_password" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$keychain_password" "$keychain"
-          security import "$RUNNER_TEMP/cert.p12" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -t cert -f pkcs12 -k "$keychain"
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
-          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
-          rm "$RUNNER_TEMP/cert.p12"
-
-      - name: Build app and DMG
-        env:
-          # Empty (ad-hoc signing) unless this is a release tag.
-          MACOS_SIGN_IDENTITY: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.MACOS_SIGN_IDENTITY || '' }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-        run: |
-          ./bundle-macos.sh --universal --dmg
-          # A stable file name so the website's download link always gets the latest release.
-          cp target/Tidewatch-*.dmg target/Tidewatch.dmg
-          shasum -a 256 target/*.dmg | sed 's|target/||' > target/SHA256SUMS.txt
+          ./bundle-macos.sh --universal --zip
+          # A stable file name so the installer always gets the latest release.
+          cp target/Tidewatch-*.zip target/Tidewatch.zip
+          (cd target && shasum -a 256 Tidewatch-*.zip Tidewatch.zip > SHA256SUMS.txt)
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: dmg
+          name: tidewatch
           path: |
-            target/*.dmg
+            target/*.zip
             target/SHA256SUMS.txt
 
       - name: Publish GitHub Release
@@ -82,6 +51,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" target/*.dmg target/SHA256SUMS.txt \
+          gh release create "$GITHUB_REF_NAME" target/*.zip target/SHA256SUMS.txt \
             --title "Tidewatch ${GITHUB_REF_NAME#v}" --generate-notes \
-          || gh release upload "$GITHUB_REF_NAME" target/*.dmg target/SHA256SUMS.txt --clobber
+          || gh release upload "$GITHUB_REF_NAME" target/*.zip target/SHA256SUMS.txt --clobber

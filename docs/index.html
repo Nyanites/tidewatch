@@ -156,13 +156,9 @@
         <button type="button" class="copy" data-copy="install-cmd" aria-label="Copy install command">Copy</button>
       </div>
     <div class="cta">
-      <a class="btn download-link" href="https://github.com/Nyanites/tidewatch/releases/latest/download/Tidewatch.dmg">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 19h16"/></svg>
-        Download .dmg
-      </a>
       <a class="btn repo-link" href="https://github.com/Nyanites/tidewatch">View source</a>
     </div>
-    <p class="meta"><span id="version">Latest release</span> · Apple Silicon &amp; Intel · macOS 11 or newer · ~7 MB · free for small teams</p>
+    <p class="meta"><span id="version">Latest release</span> · Apple Silicon &amp; Intel · macOS 11 or newer · ~4 MB · free for small teams</p>
     <div class="shot">
       <img src="assets/screenshot-detection.jpg" width="1640" height="1000" alt="Tidewatch showing a 'DCSync rights granted' detection, the matching events, and the full details of one event">
       <p class="caption">A DCSync backdoor flagged in a public attack sample, with the rule's explanation, ATT&amp;CK mapping and every field of the event.</p>
@@ -220,8 +216,7 @@
 <section id="install">
   <div class="wrap">
     <h2>Install in a minute</h2>
-    <p class="lead">No Rust, Homebrew or build tools needed. Pick whichever you prefer.</p>
-    <h3 class="opt">Option 1 · One command <span class="tag">recommended</span></h3>
+    <p class="lead">One command. No Rust, Homebrew or build tools needed, and no security prompts.</p>
     <ol class="steps">
       <li>Open <strong>Terminal</strong> (press <kbd>⌘</kbd> <kbd>Space</kbd>, type <em>Terminal</em>, press <kbd>Return</kbd>).</li>
       <li>Paste this and press <kbd>Return</kbd>:
@@ -232,14 +227,8 @@
       </li>
       <li>Open Tidewatch from Launchpad or Applications, or double-click any <code>.evtx</code> file.</li>
     </ol>
-    <div class="note"><strong>What the command does:</strong> downloads the latest release from GitHub, checks it against the published SHA-256 checksum, and copies Tidewatch into Applications. It never asks for your password. <a href="install.sh">Read the script</a> before running it if you like. Run it again any time to update.</div>
+    <div class="note"><strong>What the command does:</strong> downloads the latest release from GitHub, checks it against the published SHA-256 checksum, and copies Tidewatch into Applications. It never asks for your password. <a href="install.sh">Read the script</a> before running it if you like. Run it again any time to update. To uninstall, drag Tidewatch from Applications to the Trash.</div>
 
-    <h3 class="opt">Option 2 · Download the disk image</h3>
-    <ol class="steps">
-      <li><strong><a class="download-link" href="https://github.com/Nyanites/tidewatch/releases/latest/download/Tidewatch.dmg">Download Tidewatch.dmg</a></strong> and open it.</li>
-      <li>Drag <strong>Tidewatch</strong> onto the <strong>Applications</strong> folder.</li>
-      <li>The first time you open it, macOS says it can't verify the developer, because Tidewatch isn't notarized by Apple. Click <strong>Done</strong>, go to <strong>System Settings → Privacy &amp; Security</strong>, and click <strong>Open Anyway</strong>. You only need to do this once.</li>
-    </ol>
   </div>
 </section>
 

@@ -2,9 +2,9 @@
 
 A fast, native Windows Event Log (`.evtx`) viewer and threat-hunting tool for macOS, written in Rust.
 
-**[⬇ Download Tidewatch for macOS](https://github.com/Nyanites/tidewatch/releases/latest/download/Tidewatch.dmg)** · [Website](https://nyanites.github.io/tidewatch/)
+**Install** (paste into Terminal): `curl -fsSL https://nyanites.github.io/tidewatch/install.sh | bash` · [Website](https://nyanites.github.io/tidewatch/)
 
-One 7 MB app that runs on Apple Silicon and Intel Macs (macOS 11 or newer). There's nothing else to install.
+One small app (about 4 MB to download) that runs on Apple Silicon and Intel Macs (macOS 11 or newer). There's nothing else to install.
 
 Open a `.evtx` file pulled from a Windows machine and search, filter and read its events. You don't need Windows, a VM or Event Viewer. It's built for incident responders and threat hunters who triage logs on a Mac.
 
@@ -38,19 +38,15 @@ Open a `.evtx` file pulled from a Windows machine and search, filter and read it
 
 ## Install
 
-**Option 1: one command (recommended).** Open Terminal and paste:
+Open **Terminal** (press ⌘ Space, type *Terminal*, press Return), paste this and press Return:
 
 ```bash
 curl -fsSL https://nyanites.github.io/tidewatch/install.sh | bash
 ```
 
-The [installer](docs/install.sh) downloads the latest release from GitHub, checks it against the published SHA-256 checksum, and copies Tidewatch into Applications. It never asks for your password. Run it again to update. To install a specific version, prefix the command with `TIDEWATCH_VERSION=0.1.0`.
+Then open Tidewatch from Launchpad or Applications, or double-click any `.evtx` file.
 
-**Option 2: disk image.**
-
-1. Download **[Tidewatch.dmg](https://github.com/Nyanites/tidewatch/releases/latest/download/Tidewatch.dmg)** from the [latest release](https://github.com/Nyanites/tidewatch/releases/latest).
-2. Open the `.dmg` and drag **Tidewatch** onto **Applications**.
-3. The first time you open it, macOS says it can't verify the developer, because Tidewatch isn't notarized by Apple. Click **Done**, go to **System Settings → Privacy & Security**, and click **Open Anyway**. You only need to do this once.
+The [installer](docs/install.sh) downloads the latest release from GitHub, checks it against the published SHA-256 checksum, and copies Tidewatch into Applications. It never asks for your password, and the app opens straight away with no security prompt. Run the same command again to update. To install a specific version, prefix it with `TIDEWATCH_VERSION=0.1.1`.
 
 **Uninstall:** drag Tidewatch from Applications to the Trash.
 
@@ -62,7 +58,7 @@ Requires the [Rust toolchain](https://rustup.rs) (1.87 or newer) and Xcode Comma
 ```bash
 git clone https://github.com/Nyanites/tidewatch.git
 cd tidewatch
-./bundle-macos.sh --dmg          # builds target/Tidewatch.app and target/Tidewatch-<version>.dmg
+./bundle-macos.sh               # builds target/Tidewatch.app
 ```
 
 Add `--universal` for an app that runs on both Apple Silicon and Intel. To run without bundling: `cargo run --release -- path/to/Security.evtx`.
@@ -290,14 +286,13 @@ src/
 └── app.rs      UI (egui): toolbar, table, details, summary, filtering, export
 ```
 
-`bundle-macos.sh` packages the app (icon, `.evtx` file association, signing, `.dmg`); `scripts/make-icon.sh` regenerates `assets/AppIcon.icns`.
+`bundle-macos.sh` packages the app (icon, `.evtx` file association, ad-hoc signing, and with `--zip` the release archive); `scripts/make-icon.sh` regenerates `assets/AppIcon.icns`.
 
 Built with [`evtx`](https://github.com/omerbenamram/evtx) for parsing, [`egui`/`eframe`](https://github.com/emilk/egui) for the UI, [`rayon`](https://github.com/rayon-rs/rayon) for parallelism, and [`regex`](https://github.com/rust-lang/regex) + [`memchr`](https://github.com/BurntSushi/memchr) for searching.
 
 ## Limitations
 
 - **No Windows message text.** Windows builds full messages (e.g. *"An account was successfully logged on…"*) from resource DLLs that only exist on a Windows install. This viewer shows the structured event data instead, plus built-in short descriptions for about 250 common event IDs (Security, System, Sysmon, PowerShell, Task Scheduler, RDP, Defender, Firewall and others).
-- **Not notarized by Apple.** The one-command installer avoids the first-launch warning; the disk image needs a one-time approval (see [Install](#install)).
 - **One file at a time.** Merging several logs into one timeline isn't supported yet.
 - **Times are shown in UTC**, as stored in the log.
 - **The original file must stay in place** while it's open, because JSON, XML and JSON Lines export are re-read from it.
@@ -349,20 +344,9 @@ Event descriptions and value decoders live in [`src/known.rs`](src/known.rs). To
 Releases are built by GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)). Nobody needs a local build:
 
 1. Bump `version` in `Cargo.toml` and commit.
-2. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`
+2. Tag and push: `git tag v0.1.1 && git push origin v0.1.1`
 
-The workflow builds the universal app, packages `Tidewatch-<version>.dmg`, and attaches it to a new GitHub Release with generated notes. It refuses to run if the tag doesn't match the `Cargo.toml` version. Every push and pull request also runs formatting, clippy and tests ([`ci.yml`](.github/workflows/ci.yml)).
-
-**Removing the first-launch warning.** Add these repository secrets, and the workflow signs the app with your Developer ID and notarizes the `.dmg`. This needs an [Apple Developer Program](https://developer.apple.com/programs/) membership.
-
-| Secret | Value |
-| --- | --- |
-| `MACOS_CERTIFICATE` | base64 of your *Developer ID Application* certificate exported as `.p12` (`base64 -i cert.p12 \| pbcopy`) |
-| `MACOS_CERTIFICATE_PASSWORD` | the `.p12` export password |
-| `MACOS_SIGN_IDENTITY` | e.g. `Developer ID Application: Jane Doe (AB12CD34EF)` |
-| `APPLE_ID` | your Apple ID email |
-| `APPLE_TEAM_ID` | your 10-character team ID |
-| `APPLE_APP_PASSWORD` | an [app-specific password](https://support.apple.com/102654) for that Apple ID |
+The workflow builds the universal app, packages it as `Tidewatch-<version>.zip` plus a stable-named `Tidewatch.zip` (what the installer downloads) with a `SHA256SUMS.txt`, and attaches them to a new GitHub Release with generated notes. It refuses to run if the tag doesn't match the `Cargo.toml` version. Every push and pull request also runs formatting, clippy and tests ([`ci.yml`](.github/workflows/ci.yml)).
 
 ## License
 
