@@ -4,7 +4,7 @@ A fast, native Windows Event Log (`.evtx`) viewer and threat-hunting tool for ma
 
 **Install** (paste into Terminal): `curl -fsSL https://nyanites.github.io/tidewatch/install.sh | bash` · [Website](https://nyanites.github.io/tidewatch/)
 
-One small app (about 4 MB to download) that runs on Apple Silicon and Intel Macs (macOS 11 or newer). There's nothing else to install.
+One small app (about 7 MB to download) that runs on Apple Silicon and Intel Macs (macOS 11 or newer). There's nothing else to install.
 
 Open a `.evtx` file pulled from a Windows machine and search, filter and read its events. You don't need Windows, a VM or Event Viewer. It's built for incident responders and threat hunters who triage logs on a Mac.
 
