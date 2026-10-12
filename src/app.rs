@@ -10,9 +10,10 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::detect::{self, DetRule, RuleSource, Severity};
-use crate::loader::{self, FileInfo, Msg, Render};
+use crate::loader::{self, Msg, Render};
 use crate::model::{level_name, Col, Record, Section};
 use crate::search::{Query, SearchOptions};
+use crate::workspace::{self, Folder, Source};
 
 // ---------------------------------------------------------------- columns
 
@@ -24,26 +25,29 @@ struct ColDef {
 
 const C_LEVEL: usize = 0;
 const C_TIME: usize = 1;
-const C_RECORD: usize = 2;
-const C_ERID: usize = 3;
-const C_EVENT: usize = 4;
-const C_DESC: usize = 5;
-const C_DETECT: usize = 6;
-const C_PROVIDER: usize = 7;
-const C_CHANNEL: usize = 8;
-const C_COMPUTER: usize = 9;
-const C_USER: usize = 10;
-const C_PID: usize = 11;
-const C_TID: usize = 12;
-const C_TASK: usize = 13;
-const C_OPCODE: usize = 14;
-const C_KEYWORDS: usize = 15;
-const C_DATA: usize = 16;
+const C_FILE: usize = 2;
+const C_RECORD: usize = 3;
+const C_ERID: usize = 4;
+const C_EVENT: usize = 5;
+const C_DESC: usize = 6;
+const C_DETECT: usize = 7;
+const C_PROVIDER: usize = 8;
+const C_CHANNEL: usize = 9;
+const C_COMPUTER: usize = 10;
+const C_USER: usize = 11;
+const C_PID: usize = 12;
+const C_TID: usize = 13;
+const C_TASK: usize = 14;
+const C_OPCODE: usize = 15;
+const C_KEYWORDS: usize = 16;
+const C_DATA: usize = 17;
 
 #[rustfmt::skip]
-const COLS: [ColDef; 17] = [
+const COLS: [ColDef; 18] = [
     ColDef { name: "Level", width: 105.0, default: true },
     ColDef { name: "Date and Time (UTC)", width: 215.0, default: true },
+    // Only shown while more than one file is open.
+    ColDef { name: "File", width: 170.0, default: true },
     ColDef { name: "Record #", width: 75.0, default: true },
     ColDef { name: "EventRecordID", width: 105.0, default: false },
     ColDef { name: "Event ID", width: 70.0, default: true },
@@ -79,12 +83,21 @@ enum Detection {
     Rule(usize),
 }
 
+/// Which open files the table, search and summary cover.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    All,
+    Active,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DetailTab {
     General,
     Json,
     Xml,
 }
+
+const SETTINGS_KEY: &str = "settings_v4";
 
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
@@ -117,7 +130,13 @@ enum Action {
     TimeFrom(String),
     TimeTo(String),
     Copy(String, &'static str),
-    CopyRendered(u32, u64, Render),
+    CopyRendered(u16, u32, u64, Render),
+    /// Make an open file the active one (index into `sources`).
+    Activate(usize),
+    CloseSource(usize),
+    /// Open a file from the explorer (or activate it if already open).
+    OpenFile(PathBuf),
+    ScopeActive,
     ShowDetection(usize),
     Open(PathBuf),
 }
@@ -125,6 +144,9 @@ enum Action {
 /// Aggregates for the Log Summary window.
 #[derive(Default)]
 struct Summary {
+    /// Total records when computed, and the file the scope was limited to.
+    total: usize,
+    scope: Option<u16>,
     records: usize,
     first: String,
     last: String,
@@ -141,18 +163,22 @@ struct Summary {
 pub struct App {
     settings: Settings,
 
-    file: Option<PathBuf>,
-    info: Option<FileInfo>,
+    /// Open files, in the order they were opened. `Record::source` indexes this.
+    sources: Vec<Source>,
+    /// The file the explorer highlights; the "Active file" scope shows only this one.
+    active: Option<usize>,
+    scope: Scope,
+    /// Folder listed in the file explorer.
+    folder: Option<Folder>,
+    show_explorer: bool,
+    explorer_filter: String,
+    /// Error from the last open attempt that produced no file (shown on the start screen).
+    open_error: Option<String>,
     records: Vec<Record>,
     keys: Vec<Box<str>>,
     keys_lc: Vec<Box<str>>,
-    loader: Option<Receiver<Msg>>,
-    load_started: Instant,
-    load_time: Option<Duration>,
-    records_done: bool,
-    record_errors: usize,
-    last_error: Option<String>,
-    fatal: Option<String>,
+    /// Shared field-name ids, so records from different files can be searched together.
+    key_ids: HashMap<Box<str>, u32>,
 
     // Filter inputs.
     search: String,
@@ -210,10 +236,17 @@ pub struct App {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, path: Option<PathBuf>) -> Self {
-        let mut settings: Settings = cc
-            .storage
-            .and_then(|s| eframe::get_value(s, "settings_v3"))
-            .unwrap_or_default();
+        let mut settings: Settings = match cc.storage {
+            Some(st) => eframe::get_value(st, SETTINGS_KEY).unwrap_or_else(|| {
+                // Settings from before the File column existed: insert it.
+                let mut old: Settings = eframe::get_value(st, "settings_v3").unwrap_or_default();
+                if old.columns.len() > C_FILE {
+                    old.columns.insert(C_FILE, true);
+                }
+                old
+            }),
+            None => Settings::default(),
+        };
         settings.columns.resize(COLS.len(), false);
         cc.egui_ctx.set_visuals(if settings.dark {
             egui::Visuals::dark()
@@ -227,18 +260,17 @@ impl App {
 
         let mut app = Self {
             settings,
-            file: None,
-            info: None,
+            sources: Vec::new(),
+            active: None,
+            scope: Scope::All,
+            folder: None,
+            show_explorer: false,
+            explorer_filter: String::new(),
+            open_error: None,
             records: Vec::new(),
             keys: Vec::new(),
             keys_lc: Vec::new(),
-            loader: None,
-            load_started: Instant::now(),
-            load_time: None,
-            records_done: false,
-            record_errors: 0,
-            last_error: None,
-            fatal: None,
+            key_ids: HashMap::new(),
             search: String::new(),
             search_edited: None,
             event_ids: String::new(),
@@ -304,10 +336,117 @@ impl App {
 
     // ---------------------------------------------------------------- loading
 
+    /// Open a file or folder: files are added to the open set, folders go to the explorer.
     fn open(&mut self, path: PathBuf, ctx: &egui::Context) {
-        self.records.clear();
-        self.keys.clear();
-        self.keys_lc.clear();
+        if path.is_dir() {
+            self.open_folder(path, ctx);
+        } else {
+            self.open_file(path, ctx);
+        }
+    }
+
+    fn remember(&mut self, path: &Path) {
+        self.settings.recent.retain(|p| p != path);
+        self.settings.recent.insert(0, path.to_path_buf());
+        self.settings.recent.truncate(10);
+    }
+
+    fn open_folder(&mut self, path: PathBuf, ctx: &egui::Context) {
+        let folder = workspace::scan(&path);
+        let n = folder.files.len();
+        self.remember(&path);
+        self.folder = Some(folder);
+        self.show_explorer = true;
+        self.explorer_filter.clear();
+        if n == 0 {
+            self.toast(format!(
+                "No .evtx files found in {}",
+                workspace::display_name(&path)
+            ));
+        } else if n == 1 {
+            let p = self.folder.as_ref().unwrap().files[0].path.clone();
+            self.open_file(p, ctx);
+        }
+        self.update_title(ctx);
+    }
+
+    /// Add a file to the open set (or make it active if it's already open).
+    fn open_file(&mut self, path: PathBuf, ctx: &egui::Context) {
+        if let Some(i) = self.sources.iter().position(|s| s.path == path) {
+            self.activate(i);
+            return;
+        }
+        if let Err(e) = loader::FileInfo::read(&path) {
+            self.open_error = Some(e.clone());
+            self.toast(e);
+            return;
+        }
+        if self.sources.len() >= u16::MAX as usize {
+            self.toast("Too many open files");
+            return;
+        }
+        self.open_error = None;
+        self.remember(&path);
+        let rx = loader::spawn(path.clone(), ctx.clone());
+        self.sources.push(Source::new(path, rx));
+        self.active = Some(self.sources.len() - 1);
+        if self.sources.len() == 2 && self.folder.is_none() {
+            self.show_explorer = true;
+        }
+        // Results so far don't cover the new file.
+        self.set_detection(None);
+        self.detections_ran = false;
+        self.hits_for = None;
+        self.mark_dirty();
+        self.update_title(ctx);
+    }
+
+    fn activate(&mut self, i: usize) {
+        if i < self.sources.len() && self.active != Some(i) {
+            self.active = Some(i);
+            if self.scope == Scope::Active {
+                self.mark_dirty();
+            }
+        }
+    }
+
+    /// Close one open file and drop its events.
+    fn close_source(&mut self, i: usize, ctx: &egui::Context) {
+        if i >= self.sources.len() {
+            return;
+        }
+        self.sources.remove(i);
+        let i = i as u16;
+        self.records.retain(|r| r.source != i);
+        for r in &mut self.records {
+            if r.source > i {
+                r.source -= 1;
+            }
+        }
+        self.active = match self.active {
+            _ if self.sources.is_empty() => None,
+            Some(a) if a > i as usize => Some(a - 1),
+            Some(a) if a == i as usize => Some(a.min(self.sources.len() - 1)),
+            other => other,
+        };
+        if self.sources.is_empty() {
+            self.scope = Scope::All;
+            self.keys.clear();
+            self.keys_lc.clear();
+            self.key_ids.clear();
+        }
+        self.reset_derived();
+        self.update_title(ctx);
+    }
+
+    fn close_all(&mut self, ctx: &egui::Context) {
+        while !self.sources.is_empty() {
+            self.close_source(self.sources.len() - 1, ctx);
+        }
+    }
+
+    /// Drop every cache that refers to records by position (needed after records are removed).
+    fn reset_derived(&mut self) {
         self.view.clear();
         self.order.clear();
         self.order_for = (usize::MAX, 0);
@@ -323,79 +462,127 @@ impl App {
         self.record_rules.clear();
         self.active_detection = None;
         self.detection_mask = None;
-        self.info = None;
         self.selected = None;
         self.rendered = None;
-        self.record_errors = 0;
-        self.last_error = None;
-        self.fatal = None;
-        self.records_done = false;
-        self.load_time = None;
-        self.load_started = Instant::now();
-        // Dropping the old receiver cancels any in-flight load.
-        self.loader = Some(loader::spawn(path.clone(), ctx.clone()));
-        ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
-            "Tidewatch — {}",
-            path.file_name().unwrap_or_default().to_string_lossy()
-        )));
-        self.settings.recent.retain(|p| p != &path);
-        self.settings.recent.insert(0, path.clone());
-        self.settings.recent.truncate(10);
-        self.file = Some(path);
+        self.mark_dirty();
+    }
+
+    fn update_title(&self, ctx: &egui::Context) {
+        let title = match (&self.folder, self.sources.len()) {
+            (Some(f), _) => format!("Tidewatch — {}", workspace::display_name(&f.path)),
+            (None, 0) => "Tidewatch".to_string(),
+            (None, 1) => format!("Tidewatch — {}", self.sources[0].name),
+            (None, n) => format!("Tidewatch — {n} files"),
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
     }
 
     fn open_dialog(&mut self, ctx: &egui::Context) {
-        if let Some(p) = rfd::FileDialog::new()
+        if let Some(paths) = rfd::FileDialog::new()
             .add_filter("Windows Event Log", &["evtx"])
             .add_filter("All files", &["*"])
-            .pick_file()
+            .pick_files()
         {
-            self.open(p, ctx);
+            for p in paths {
+                self.open_file(p, ctx);
+            }
+        }
+    }
+
+    fn open_folder_dialog(&mut self, ctx: &egui::Context) {
+        if let Some(dir) = rfd::FileDialog::new()
+            .set_title("Open a folder of event logs")
+            .pick_folder()
+        {
+            self.open_folder(dir, ctx);
+        }
+    }
+
+    /// All open files have finished loading.
+    fn all_loaded(&self) -> bool {
+        self.sources.iter().all(Source::done)
+    }
+
+    /// Which file the current scope limits the view to, if any.
+    fn scope_source(&self) -> Option<u16> {
+        match (self.scope, self.active) {
+            (Scope::Active, Some(a)) if self.sources.len() > 1 => Some(a as u16),
+            _ => None,
         }
     }
 
     fn poll_loader(&mut self) {
-        let Some(rx) = &self.loader else { return };
         let deadline = Instant::now() + Duration::from_millis(12);
-        loop {
-            match rx.try_recv() {
-                Ok(Msg::Info(info)) => self.info = Some(info),
-                Ok(Msg::Records { records, new_keys }) => {
-                    self.keys_lc
-                        .extend(new_keys.iter().map(|k| k.to_lowercase().into_boxed_str()));
-                    self.keys.extend(new_keys);
-                    self.records.extend(records);
-                    self.view_dirty = true;
+        for idx in 0..self.sources.len() {
+            let Some(rx) = self.sources[idx].rx.take() else {
+                continue;
+            };
+            let mut finished = false;
+            loop {
+                match rx.try_recv() {
+                    Ok(Msg::Info(info)) => self.sources[idx].info = Some(info),
+                    Ok(Msg::Records {
+                        mut records,
+                        new_keys,
+                    }) => {
+                        // Map this loader's field-name ids onto the shared ones.
+                        for k in new_keys {
+                            let id = match self.key_ids.get(&k) {
+                                Some(&id) => id,
+                                None => {
+                                    let id = self.keys.len() as u32;
+                                    self.keys_lc.push(k.to_lowercase().into_boxed_str());
+                                    self.keys.push(k.clone());
+                                    self.key_ids.insert(k, id);
+                                    id
+                                }
+                            };
+                            self.sources[idx].key_map.push(id);
+                        }
+                        let map = &self.sources[idx].key_map;
+                        for r in &mut records {
+                            r.source = idx as u16;
+                            for f in r.fields.iter_mut() {
+                                f.key = map.get(f.key as usize).copied().unwrap_or(0);
+                            }
+                        }
+                        self.sources[idx].events += records.len();
+                        self.records.extend(records);
+                        self.view_dirty = true;
+                    }
+                    Ok(Msg::RecordError(e)) => {
+                        self.sources[idx].errors += 1;
+                        self.sources[idx].last_error = Some(e);
+                    }
+                    Ok(Msg::Done) => {
+                        finished = true;
+                        break;
+                    }
+                    Ok(Msg::Fatal(e)) => {
+                        self.toast(format!("{}: {e}", self.sources[idx].name));
+                        self.sources[idx].fatal = Some(e);
+                        finished = true;
+                        break;
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        finished = true;
+                        break;
+                    }
                 }
-                Ok(Msg::RecordError(e)) => {
-                    self.record_errors += 1;
-                    self.last_error = Some(e);
-                }
-                Ok(Msg::Done) => {
-                    self.records_done = true;
-                    self.load_time = Some(self.load_started.elapsed());
-                    // Field names are now complete, so recompile the query against all of them.
-                    self.hits_for = None;
-                    self.summary = None;
-                    self.view_dirty = true;
-                    self.last_refresh = Instant::now() - Duration::from_secs(1);
-                    self.loader = None;
-                    break;
-                }
-                Ok(Msg::Fatal(e)) => {
-                    self.fatal = Some(e);
-                    self.records_done = true;
-                    self.loader = None;
-                    break;
-                }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    self.loader = None;
+                if Instant::now() > deadline {
                     break;
                 }
             }
-            if Instant::now() > deadline {
-                break;
+            if finished {
+                let src = &mut self.sources[idx];
+                src.load_time = Some(src.started.elapsed());
+                // Field names may have changed, so recompile the query against all of them.
+                self.hits_for = None;
+                self.summary = None;
+                self.mark_dirty();
+            } else {
+                self.sources[idx].rx = Some(rx);
             }
         }
     }
@@ -432,7 +619,7 @@ impl App {
         // While streaming in records, don't refilter on every frame.
         // While loading, refresh less often on big logs: each refresh re-sorts and re-filters
         // everything loaded so far and competes with the parser for CPU.
-        let interval = if self.records_done {
+        let interval = if self.all_loaded() {
             0
         } else {
             (self.records.len() as u64 / 2_500).clamp(300, 2_000)
@@ -443,7 +630,7 @@ impl App {
         self.view_dirty = false;
         self.search_edited = None;
         self.last_refresh = Instant::now();
-        if self.records_done && !self.detections_ran && self.fatal.is_none() {
+        if self.all_loaded() && !self.detections_ran && !self.records.is_empty() {
             self.run_detections();
         }
         let t = Instant::now();
@@ -519,16 +706,23 @@ impl App {
     /// Stage 2: all records sorted by the current column; only redone when the column or
     /// record count changes. Direction is applied when walking it.
     fn update_order(&mut self) {
-        let want = (self.sort_col, self.records.len());
+        // Order also depends on the file list (the File column and renumbering on close).
+        let want = (
+            self.sort_col,
+            self.records.len() ^ (self.sources.len() << 48),
+        );
         if self.order_for == want {
             return;
         }
         let records = &self.records;
         let col = self.sort_col;
+        let names: Vec<&str> = self.sources.iter().map(|s| s.name.as_str()).collect();
         let mut order: Vec<u32> = (0..records.len() as u32).collect();
         order.par_sort_unstable_by(|&a, &b| {
             let (ra, rb) = (&records[a as usize], &records[b as usize]);
-            cmp_col(ra, rb, col).then(ra.record_id.cmp(&rb.record_id))
+            cmp_col(ra, rb, col, &names)
+                .then(ra.source.cmp(&rb.source))
+                .then(ra.record_id.cmp(&rb.record_id))
         });
         self.order = order;
         self.order_for = want;
@@ -553,13 +747,15 @@ impl App {
         let to = normalize_time(&self.time_to);
         let provider = self.provider.as_deref();
         let detection_mask = self.detection_mask.as_deref();
+        let scope = self.scope_source();
         let records = &self.records;
         let hits = self.hits.as_deref();
 
         let keep = |&i: &u32| {
             let r = &records[i as usize];
-            hits.is_none_or(|h| h[i as usize])
-                && detection_mask.is_none_or(|m| m[i as usize])
+            scope.is_none_or(|s| r.source == s)
+                && hits.is_none_or(|h| h.get(i as usize).copied().unwrap_or(false))
+                && detection_mask.is_none_or(|m| m.get(i as usize).copied().unwrap_or(false))
                 && (all_levels || level_ok[r.level as usize])
                 && (include.is_empty() || include.contains(&r.event_id))
                 && !exclude.contains(&r.event_id)
@@ -583,7 +779,7 @@ impl App {
         // costs hundreds of milliseconds on multi-million-event logs.
         if self.providers_counted != records.len() {
             let mut counts: HashMap<&str, usize> = HashMap::new();
-            for r in records {
+            for r in records.iter() {
                 *counts.entry(r.provider()).or_default() += 1;
             }
             self.providers = sorted_counts(counts.into_iter().map(|(k, v)| (k.to_string(), v)));
@@ -713,12 +909,12 @@ impl App {
                 ctx.copy_text(text);
                 self.toast(format!("Copied {what}"));
             }
-            Action::CopyRendered(chunk, id, format) => {
+            Action::CopyRendered(source, chunk, id, format) => {
                 let result = self
-                    .file
-                    .as_deref()
-                    .ok_or_else(|| "no file open".to_string())
-                    .and_then(|p| loader::render(p, &[(chunk, id)], format));
+                    .sources
+                    .get(source as usize)
+                    .ok_or_else(|| "file is no longer open".to_string())
+                    .and_then(|s| loader::render(&s.path, &[(chunk, id)], format));
                 match result.ok().and_then(|mut m| m.remove(&(chunk, id))) {
                     Some(text) => {
                         ctx.copy_text(text);
@@ -733,12 +929,26 @@ impl App {
             }
             Action::ShowDetection(rule) => self.set_detection(Some(Detection::Rule(rule))),
             Action::Open(p) => self.open(p, ctx),
+            Action::OpenFile(p) => self.open_file(p, ctx),
+            Action::Activate(i) => self.activate(i),
+            Action::ScopeActive => {
+                self.scope = Scope::Active;
+                self.mark_dirty();
+            }
+            Action::CloseSource(i) => self.close_source(i, ctx),
         }
     }
 
     fn compute_summary(&mut self) {
-        let records = &self.records;
+        let scope = self.scope_source();
+        let records: Vec<&Record> = self
+            .records
+            .iter()
+            .filter(|r| scope.is_none_or(|s| r.source == s))
+            .collect();
         let mut s = Summary {
+            total: self.records.len(),
+            scope,
             records: records.len(),
             ..Default::default()
         };
@@ -750,7 +960,7 @@ impl App {
         s.key_counts = vec![0; self.keys.len()];
         let target_user = self.keys.iter().position(|k| &**k == "TargetUserName");
         let ip = self.keys.iter().position(|k| &**k == "IpAddress");
-        for r in records {
+        for r in records.iter().copied() {
             if s.first.is_empty() || *r.timestamp < *s.first {
                 s.first = r.timestamp.to_string();
             }
@@ -784,7 +994,11 @@ impl App {
         s.channels = own(channels);
         s.accounts = own(accounts);
         s.ips = own(ips);
-        s.providers = self.providers.clone();
+        let mut providers = HashMap::<&str, usize>::new();
+        for r in &records {
+            *providers.entry(r.provider()).or_default() += 1;
+        }
+        s.providers = own(providers);
         let mut ids: Vec<_> = ids
             .into_iter()
             .map(|((id, p), (n, d))| (id, p.to_string(), d, n))
@@ -797,8 +1011,14 @@ impl App {
     // ---------------------------------------------------------------- input
 
     fn handle_keys(&mut self, ctx: &egui::Context) {
+        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::O)) {
+            self.open_folder_dialog(ctx);
+        }
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::O)) {
             self.open_dialog(ctx);
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::B)) {
+            self.show_explorer = !self.show_explorer;
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::F)) {
             self.focus_search = true;
@@ -838,6 +1058,12 @@ impl App {
 
     fn select(&mut self, idx: Option<usize>) {
         self.selected = idx;
+        if let Some(r) = idx.and_then(|i| self.records.get(i)) {
+            // Follow the selection in the explorer (doesn't change an "All files" view).
+            if self.scope == Scope::All {
+                self.active = Some(r.source as usize);
+            }
+        }
         self.rendered = None;
     }
 
@@ -848,12 +1074,15 @@ impl App {
     // ---------------------------------------------------------------- export
 
     fn export(&mut self, csv: bool) {
-        let name = self
-            .file
-            .as_ref()
-            .and_then(|p| p.file_stem())
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "events".into());
+        let name = match (&self.folder, self.sources.as_slice()) {
+            (_, [one]) => one
+                .path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned()),
+            (Some(f), _) => Some(workspace::display_name(&f.path)),
+            _ => None,
+        }
+        .unwrap_or_else(|| "events".into());
         let ext = if csv { "csv" } else { "jsonl" };
         let Some(path) = rfd::FileDialog::new()
             .set_file_name(format!("{name}-filtered.{ext}"))
@@ -936,23 +1165,31 @@ impl App {
     /// Returns how many events could not be re-read from the source file.
     fn write_jsonl(&self, path: &Path) -> Result<usize, Box<dyn std::error::Error>> {
         use std::io::Write;
-        let src = self.file.as_ref().ok_or("no file open")?;
         let mut w = std::io::BufWriter::new(std::fs::File::create(path)?);
         let mut missing = 0;
-        // Render in slices so huge exports don't hold every event's JSON in memory at once.
+        // Render in slices so huge exports don't hold every event's JSON in memory at once;
+        // within a slice, re-read each file once.
         for part in self.view.chunks(20_000) {
-            let wanted: Vec<(u32, u64)> = part
-                .iter()
-                .map(|&i| {
-                    (
-                        self.records[i as usize].chunk,
-                        self.records[i as usize].record_id,
-                    )
-                })
-                .collect();
-            let rendered = loader::render(src, &wanted, Render::JsonLine)?;
-            for key in &wanted {
-                match rendered.get(key) {
+            let mut by_source: HashMap<u16, Vec<(u32, u64)>> = HashMap::new();
+            for &i in part {
+                let r = &self.records[i as usize];
+                by_source
+                    .entry(r.source)
+                    .or_default()
+                    .push((r.chunk, r.record_id));
+            }
+            let mut rendered = HashMap::new();
+            for (src, wanted) in by_source {
+                let Some(s) = self.sources.get(src as usize) else {
+                    continue;
+                };
+                for (k, v) in loader::render(&s.path, &wanted, Render::JsonLine)? {
+                    rendered.insert((src, k.0, k.1), v);
+                }
+            }
+            for &i in part {
+                let r = &self.records[i as usize];
+                match rendered.get(&(r.source, r.chunk, r.record_id)) {
                     Some(json) => {
                         w.write_all(json.as_bytes())?;
                         w.write_all(b"\n")?;
@@ -972,16 +1209,28 @@ impl App {
         egui::menu::bar(ui, |ui| {
             ui.menu_button("File", |ui| {
                 if ui
-                    .add(egui::Button::new("Open…").shortcut_text("⌘O"))
+                    .add(egui::Button::new("Open Files…").shortcut_text("⌘O"))
                     .clicked()
                 {
                     ui.close_menu();
                     self.open_dialog(&ctx);
                 }
+                if ui
+                    .add(egui::Button::new("Open Folder…").shortcut_text("⇧⌘O"))
+                    .clicked()
+                {
+                    ui.close_menu();
+                    self.open_folder_dialog(&ctx);
+                }
                 ui.add_enabled_ui(!self.settings.recent.is_empty(), |ui| {
                     ui.menu_button("Open Recent", |ui| {
                         for p in &self.settings.recent {
                             let label = p.file_name().unwrap_or_default().to_string_lossy();
+                            let label = if p.is_dir() {
+                                format!("📁 {label}")
+                            } else {
+                                label.into_owned()
+                            };
                             if ui
                                 .button(label)
                                 .on_hover_text(p.display().to_string())
@@ -993,6 +1242,16 @@ impl App {
                         }
                     });
                 });
+                if ui
+                    .add_enabled(
+                        !self.sources.is_empty(),
+                        egui::Button::new("Close All Files"),
+                    )
+                    .clicked()
+                {
+                    ui.close_menu();
+                    self.close_all(&ctx);
+                }
                 ui.separator();
                 let can_export = !self.view.is_empty();
                 if ui
@@ -1014,6 +1273,11 @@ impl App {
                 }
             });
             ui.menu_button("View", |ui| {
+                ui.add(egui::Checkbox::new(
+                    &mut self.show_explorer,
+                    "File Explorer",
+                ))
+                .on_hover_text("⌘B");
                 ui.checkbox(&mut self.show_summary, "Log Summary");
                 ui.separator();
                 ui.label(RichText::new("Columns").weak());
@@ -1056,7 +1320,9 @@ impl App {
 
         // Row 1: search.
         ui.horizontal(|ui| {
-            if ui.button("📂 Open").on_hover_text("Open an .evtx file (⌘O)").clicked() {
+            ui.toggle_value(&mut self.show_explorer, "🗂")
+                .on_hover_text("File explorer (⌘B)");
+            if ui.button("📂 Open").on_hover_text("Open .evtx files (⌘O); folders with ⇧⌘O").clicked() {
                 self.open_dialog(&ctx);
             }
             ui.separator();
@@ -1115,6 +1381,28 @@ impl App {
 
         // Row 2: detections and structured filters.
         ui.horizontal(|ui| {
+            if self.sources.len() > 1 {
+                ui.label("Search in");
+                let before = self.scope;
+                ui.selectable_value(
+                    &mut self.scope,
+                    Scope::All,
+                    format!("All {} files", self.sources.len()),
+                )
+                .on_hover_text("Search and show events from every open file, merged by time");
+                let active_name = self
+                    .active
+                    .and_then(|a| self.sources.get(a))
+                    .map_or("Active file".to_string(), |s| truncate_label(&s.name, 28));
+                ui.selectable_value(&mut self.scope, Scope::Active, active_name)
+                    .on_hover_text(
+                        "Only the active file (click a file in the explorer to choose it)",
+                    );
+                if self.scope != before {
+                    self.mark_dirty();
+                }
+                ui.separator();
+            }
             self.detections_menu(ui);
             ui.separator();
             ui.label("Event IDs");
@@ -1563,45 +1851,378 @@ impl App {
         ui.add_space(4.0);
     }
 
-    fn status_bar(&mut self, ui: &mut egui::Ui) {
+    // ---------------------------------------------------------------- UI: explorer
+
+    fn explorer(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+        let ctx = ui.ctx().clone();
+        let dark = ui.visuals().dark_mode;
+        ui.add_space(6.0);
         ui.horizontal(|ui| {
-            if let Some(f) = &self.file {
+            ui.label(RichText::new("Files").strong().size(15.0));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("✖").on_hover_text("Hide (⌘B)").clicked() {
+                    self.show_explorer = false;
+                }
+                if ui
+                    .small_button("📁")
+                    .on_hover_text("Open a folder (⇧⌘O)")
+                    .clicked()
+                {
+                    self.open_folder_dialog(&ctx);
+                }
+                if ui
+                    .small_button("+")
+                    .on_hover_text("Open files (⌘O)")
+                    .clicked()
+                {
+                    self.open_dialog(&ctx);
+                }
+            });
+        });
+        ui.label(
+            RichText::new("Tick files to open them. Click a name to make it the active file.")
+                .weak()
+                .small(),
+        );
+        ui.separator();
+
+        // Folder listing.
+        let mut opens: Vec<PathBuf> = Vec::new();
+        if let Some(folder) = &self.folder {
+            ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(f.file_name().unwrap_or_default().to_string_lossy()).strong(),
+                    RichText::new(format!("📁 {}", workspace::display_name(&folder.path))).strong(),
                 )
-                .on_hover_text(f.display().to_string());
-                ui.separator();
+                .on_hover_text(folder.path.display().to_string());
+            });
+            let loaded = folder
+                .files
+                .iter()
+                .filter(|f| self.sources.iter().any(|s| s.path == f.path))
+                .count();
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("{loaded} of {} open", folder.files.len()))
+                        .weak()
+                        .small(),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add_enabled(loaded > 0, egui::Button::new("Close all").small())
+                        .clicked()
+                    {
+                        for (i, s) in self.sources.iter().enumerate().rev() {
+                            if folder.files.iter().any(|f| f.path == s.path) {
+                                actions.push(Action::CloseSource(i));
+                            }
+                        }
+                    }
+                    if ui
+                        .add_enabled(
+                            loaded < folder.files.len(),
+                            egui::Button::new("Open all").small(),
+                        )
+                        .clicked()
+                    {
+                        opens.extend(folder.files.iter().map(|f| f.path.clone()));
+                    }
+                });
+            });
+            if folder.files.len() > 8 {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.explorer_filter)
+                        .hint_text("Filter files…")
+                        .desired_width(f32::INFINITY),
+                );
             }
-            if self.file.is_none() {
-                ui.label(RichText::new("No file open").weak());
-            } else if !self.records_done {
-                ui.spinner();
-                ui.label(format!("Parsing… {} events", fmt_num(self.records.len())));
-            } else {
-                ui.label(format!(
-                    "{} of {} events",
-                    fmt_num(self.view.len()),
-                    fmt_num(self.records.len())
-                ));
-                if self.filters_active() {
-                    ui.label(
-                        RichText::new(format!("· filtered in {} ms", self.filter_time.as_millis()))
-                            .weak(),
-                    );
-                }
-                if let Some(t) = self.load_time {
-                    ui.label(RichText::new(format!("· parsed in {:.2}s", t.as_secs_f64())).weak());
-                }
-            }
-            if self.record_errors > 0 {
-                ui.separator();
-                let r = ui.label(
-                    RichText::new(format!("⚠ {} corrupt records skipped", self.record_errors))
+            if folder.truncated {
+                ui.label(
+                    RichText::new("Large folder: only the first 5,000 logs are listed.")
+                        .small()
                         .color(Color32::from_rgb(230, 170, 50)),
                 );
-                if let Some(e) = &self.last_error {
-                    r.on_hover_text(format!("Last error: {e}"));
+            }
+        }
+
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if let Some(folder) = &self.folder {
+                    let filter = self.explorer_filter.trim().to_lowercase();
+                    let mut current_dir: Option<&str> = None;
+                    for f in folder.files.iter().filter(|f| {
+                        filter.is_empty()
+                            || f.name.to_lowercase().contains(&filter)
+                            || f.dir.to_lowercase().contains(&filter)
+                    }) {
+                        if current_dir != Some(f.dir.as_str()) {
+                            current_dir = Some(&f.dir);
+                            if !f.dir.is_empty() {
+                                ui.add_space(4.0);
+                                ui.label(RichText::new(format!("📁 {}", f.dir)).weak().small());
+                            }
+                        }
+                        let idx = self.sources.iter().position(|s| s.path == f.path);
+                        let indent = if f.dir.is_empty() { 0.0 } else { 10.0 };
+                        self.explorer_row(
+                            ui,
+                            &f.name,
+                            &f.path,
+                            Some(f.size),
+                            idx,
+                            indent,
+                            dark,
+                            actions,
+                            &mut opens,
+                        );
+                    }
+                    if folder.files.is_empty() {
+                        ui.label(RichText::new("No .evtx files in this folder.").weak());
+                    }
                 }
+
+                // Open files that aren't part of the listed folder.
+                let others: Vec<usize> = (0..self.sources.len())
+                    .filter(|&i| {
+                        self.folder
+                            .as_ref()
+                            .is_none_or(|f| !f.files.iter().any(|x| x.path == self.sources[i].path))
+                    })
+                    .collect();
+                if !others.is_empty() {
+                    if self.folder.is_some() {
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.label(RichText::new("Other open files").weak().small());
+                    }
+                    for i in others {
+                        let (name, path) =
+                            (self.sources[i].name.clone(), self.sources[i].path.clone());
+                        self.explorer_row(
+                            ui,
+                            &name,
+                            &path,
+                            None,
+                            Some(i),
+                            0.0,
+                            dark,
+                            actions,
+                            &mut opens,
+                        );
+                    }
+                }
+            });
+
+        for p in opens {
+            if !self.sources.iter().any(|s| s.path == p) {
+                actions.push(Action::OpenFile(p));
+            }
+        }
+    }
+
+    /// One file in the explorer: checkbox (open/closed), name (click to activate), status.
+    #[allow(clippy::too_many_arguments)]
+    fn explorer_row(
+        &self,
+        ui: &mut egui::Ui,
+        name: &str,
+        path: &Path,
+        size: Option<u64>,
+        idx: Option<usize>,
+        indent: f32,
+        dark: bool,
+        actions: &mut Vec<Action>,
+        opens: &mut Vec<PathBuf>,
+    ) {
+        ui.horizontal(|ui| {
+            ui.add_space(indent);
+            let mut open = idx.is_some();
+            if ui
+                .checkbox(&mut open, "")
+                .on_hover_text("Open / close this file")
+                .changed()
+            {
+                match idx {
+                    Some(i) => actions.push(Action::CloseSource(i)),
+                    None => opens.push(path.to_path_buf()),
+                }
+            }
+            let active = idx.is_some() && idx == self.active;
+            let src = idx.and_then(|i| self.sources.get(i));
+            let status = match src {
+                None => size.map(fmt_bytes).unwrap_or_default(),
+                Some(s) if s.fatal.is_some() => "failed".into(),
+                Some(s) if !s.done() => fmt_num(s.events),
+                Some(s) => fmt_num(s.events),
+            };
+            let text = if idx.is_some() {
+                RichText::new(name)
+            } else {
+                RichText::new(name).weak()
+            };
+            let text = if active { text.strong() } else { text };
+            let avail = (ui.available_width() - 80.0).max(60.0);
+            let fill = if active { ui.visuals().selection.bg_fill } else { Color32::TRANSPARENT };
+            let r = egui::Frame::none()
+                .fill(fill)
+                .rounding(4.0)
+                .inner_margin(egui::Margin::symmetric(4.0, 1.0))
+                .show(ui, |ui| {
+                    ui.set_width(avail);
+                    ui.add(
+                        egui::Label::new(text)
+                            .truncate()
+                            .selectable(false)
+                            .sense(egui::Sense::click()),
+                    )
+                })
+                .inner
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            let mut hover = path.display().to_string();
+            if let Some(s) = src {
+                if let Some(i) = &s.info {
+                    hover.push_str(&format!("\n{}", fmt_bytes(i.size)));
+                }
+                hover.push_str(&format!("\n{} events", fmt_num(s.events)));
+                if s.errors > 0 {
+                    hover.push_str(&format!(", {} corrupt records skipped", fmt_num(s.errors)));
+                }
+                if let Some(e) = &s.fatal {
+                    hover.push_str(&format!("\nCouldn't open: {e}"));
+                }
+            } else {
+                hover.push_str("\nClick to open");
+            }
+            let r = r.on_hover_text(hover);
+            if r.clicked() {
+                match idx {
+                    Some(i) => actions.push(Action::Activate(i)),
+                    None => opens.push(path.to_path_buf()),
+                }
+            }
+            r.context_menu(|ui| {
+                if let Some(i) = idx {
+                    if ui.button("Show only this file").clicked() {
+                        actions.push(Action::Activate(i));
+                        actions.push(Action::ScopeActive);
+                        ui.close_menu();
+                    }
+                    if ui.button("Close").clicked() {
+                        actions.push(Action::CloseSource(i));
+                        ui.close_menu();
+                    }
+                } else if ui.button("Open").clicked() {
+                    opens.push(path.to_path_buf());
+                    ui.close_menu();
+                }
+                if ui.button("Copy path").clicked() {
+                    actions.push(Action::Copy(path.display().to_string(), "path"));
+                    ui.close_menu();
+                }
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                match src {
+                    Some(s) if s.fatal.is_some() => {
+                        ui.label(RichText::new("⚠").color(Color32::from_rgb(235, 90, 90)));
+                    }
+                    Some(s) if !s.done() => {
+                        ui.add(egui::Spinner::new().size(12.0));
+                    }
+                    Some(s) if s.errors > 0 => {
+                        ui.label(RichText::new("⚠").color(Color32::from_rgb(230, 170, 50)));
+                    }
+                    _ => {}
+                }
+                let color = if dark {
+                    Color32::from_gray(140)
+                } else {
+                    Color32::from_gray(100)
+                };
+                ui.label(RichText::new(status).small().color(color));
+            });
+        });
+    }
+
+    fn status_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            match self.sources.as_slice() {
+                [] => {
+                    ui.label(RichText::new("No file open").weak());
+                }
+                [one] => {
+                    ui.label(RichText::new(&one.name).strong())
+                        .on_hover_text(one.path.display().to_string());
+                }
+                many => {
+                    let label = match self.scope_source() {
+                        Some(a) => format!("{} (1 of {} files)", many[a as usize].name, many.len()),
+                        None => format!("{} files", many.len()),
+                    };
+                    ui.label(RichText::new(label).strong());
+                }
+            }
+            if !self.sources.is_empty() {
+                ui.separator();
+                let loading = self.sources.iter().filter(|s| !s.done()).count();
+                if loading > 0 {
+                    ui.spinner();
+                    let of = if self.sources.len() > 1 {
+                        format!(" ({loading} of {} files loading)", self.sources.len())
+                    } else {
+                        String::new()
+                    };
+                    ui.label(format!(
+                        "Parsing… {} events{of}",
+                        fmt_num(self.records.len())
+                    ));
+                } else {
+                    let total = match self.scope_source() {
+                        Some(a) => self.sources[a as usize].events,
+                        None => self.records.len(),
+                    };
+                    ui.label(format!(
+                        "{} of {} events",
+                        fmt_num(self.view.len()),
+                        fmt_num(total)
+                    ));
+                    if self.filters_active() {
+                        ui.label(
+                            RichText::new(format!(
+                                "· filtered in {} ms",
+                                self.filter_time.as_millis()
+                            ))
+                            .weak(),
+                        );
+                    }
+                    let parse = self.sources.iter().filter_map(|s| s.load_time).max();
+                    if let Some(t) = parse {
+                        ui.label(
+                            RichText::new(format!("· parsed in {:.2}s", t.as_secs_f64())).weak(),
+                        );
+                    }
+                }
+            }
+            let errors: usize = self.sources.iter().map(|s| s.errors).sum();
+            if errors > 0 {
+                ui.separator();
+                let r = ui.label(
+                    RichText::new(format!("⚠ {} corrupt records skipped", fmt_num(errors)))
+                        .color(Color32::from_rgb(230, 170, 50)),
+                );
+                let detail: Vec<String> = self
+                    .sources
+                    .iter()
+                    .filter(|s| s.errors > 0)
+                    .map(|s| {
+                        format!(
+                            "{}: {} ({})",
+                            s.name,
+                            fmt_num(s.errors),
+                            s.last_error.as_deref().unwrap_or("")
+                        )
+                    })
+                    .collect();
+                r.on_hover_text(detail.join("\n"));
             }
             if let Some((msg, at)) = &self.toast {
                 if at.elapsed() < Duration::from_secs(4) {
@@ -1626,8 +2247,9 @@ impl App {
         };
         self.scroll_to_selected = false;
 
+        let multi_file = self.sources.len() > 1;
         let visible: Vec<usize> = (0..COLS.len())
-            .filter(|&i| self.settings.columns[i])
+            .filter(|&i| self.settings.columns[i] && (i != C_FILE || multi_file))
             .collect();
         if visible.is_empty() {
             ui.label("All columns are hidden — enable some under View → Columns.");
@@ -1694,6 +2316,11 @@ impl App {
                                 ))
                                 .color(level_color(r.level, dark)),
                                 C_TIME => RichText::new(&*r.timestamp).monospace(),
+                                C_FILE => RichText::new(
+                                    self.sources
+                                        .get(r.source as usize)
+                                        .map_or("", |s| s.name.as_str()),
+                                ),
                                 C_RECORD => RichText::new(r.record_id.to_string()).monospace(),
                                 C_ERID => RichText::new(r.col(Col::EventRecordId)).monospace(),
                                 C_EVENT => {
@@ -1732,7 +2359,7 @@ impl App {
                     if resp.clicked() || resp.secondary_clicked() {
                         clicked = Some(idx);
                     }
-                    resp.context_menu(|ui| row_menu(ui, r, actions));
+                    resp.context_menu(|ui| row_menu(ui, r, multi_file, actions));
                 });
             });
 
@@ -1788,6 +2415,14 @@ impl App {
                 ui.label(RichText::new(v).monospace());
                 ui.add_space(8.0);
             }
+            if self.sources.len() > 1 {
+                if let Some(src) = self.sources.get(r.source as usize) {
+                    ui.label(RichText::new("File").weak());
+                    ui.label(RichText::new(&src.name).monospace())
+                        .on_hover_text(src.path.display().to_string());
+                    ui.add_space(8.0);
+                }
+            }
             ui.label(RichText::new("Record #").weak()).on_hover_text(
                 "Record number in the file. The event's own EventRecordID is under System.",
             );
@@ -1832,10 +2467,10 @@ impl App {
                         Render::JsonPretty
                     };
                     let result = self
-                        .file
-                        .as_deref()
-                        .ok_or_else(|| "no file open".to_string())
-                        .and_then(|p| loader::render(p, &[(r.chunk, r.record_id)], format))
+                        .sources
+                        .get(r.source as usize)
+                        .ok_or_else(|| "file is no longer open".to_string())
+                        .and_then(|s| loader::render(&s.path, &[(r.chunk, r.record_id)], format))
                         .and_then(|mut m| {
                             m.remove(&(r.chunk, r.record_id)).ok_or_else(|| {
                                 "record could not be re-read from the file".to_string()
@@ -1959,8 +2594,9 @@ impl App {
         if self
             .summary
             .as_ref()
-            .is_none_or(|s| s.records != self.records.len())
-            && self.records_done
+            .is_none_or(|s| s.total != self.records.len() || s.scope != self.scope_source())
+            && self.all_loaded()
+            && !self.sources.is_empty()
         {
             self.compute_summary();
         }
@@ -1979,22 +2615,32 @@ impl App {
                 };
                 ui.label(RichText::new("Click any entry to filter by it.").weak());
                 ui.add_space(4.0);
-                egui::CollapsingHeader::new(RichText::new("File").strong())
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        egui::Grid::new("fileinfo")
-                            .num_columns(2)
-                            .striped(true)
-                            .show(ui, |ui| {
-                                let mut row = |k: &str, v: String| {
-                                    ui.label(RichText::new(k).weak());
-                                    ui.label(RichText::new(v).monospace());
-                                    ui.end_row();
-                                };
-                                if let Some(p) = &self.file {
-                                    row("Path", p.display().to_string());
-                                }
-                                if let Some(i) = &self.info {
+                egui::CollapsingHeader::new(
+                    RichText::new(if self.sources.len() > 1 && s.scope.is_none() {
+                        "Files"
+                    } else {
+                        "File"
+                    })
+                    .strong(),
+                )
+                .default_open(true)
+                .show(ui, |ui| {
+                    egui::Grid::new("fileinfo")
+                        .num_columns(2)
+                        .striped(true)
+                        .show(ui, |ui| {
+                            let mut row = |k: &str, v: String| {
+                                ui.label(RichText::new(k).weak());
+                                ui.label(RichText::new(v).monospace());
+                                ui.end_row();
+                            };
+                            let shown: Vec<&Source> = match s.scope {
+                                Some(a) => self.sources.get(a as usize).into_iter().collect(),
+                                None => self.sources.iter().collect(),
+                            };
+                            if let [src] = shown.as_slice() {
+                                row("Path", src.path.display().to_string());
+                                if let Some(i) = &src.info {
                                     row("Size", fmt_bytes(i.size));
                                     row(
                                         "Format version",
@@ -2024,21 +2670,38 @@ impl App {
                                         },
                                     );
                                 }
-                                row("Events", fmt_num(s.records));
-                                if self.record_errors > 0 {
-                                    row("Corrupt records", fmt_num(self.record_errors));
+                            } else {
+                                for src in &shown {
+                                    let size = src.info.as_ref().map_or(0, |i| i.size);
+                                    row(
+                                        &src.name,
+                                        format!(
+                                            "{} events · {}",
+                                            fmt_num(src.events),
+                                            fmt_bytes(size)
+                                        ),
+                                    );
                                 }
-                                row("First event", s.first.clone());
-                                row("Last event", s.last.clone());
-                                let lv: Vec<String> = LEVELS
-                                    .iter()
-                                    .zip(s.levels)
-                                    .filter(|(_, n)| *n > 0)
-                                    .map(|((name, _), n)| format!("{name}: {}", fmt_num(n)))
-                                    .collect();
-                                row("Levels", lv.join(", "));
-                            });
-                    });
+                            }
+                            row("Events", fmt_num(s.records));
+                            let errors: usize = match s.scope {
+                                Some(a) => self.sources.get(a as usize).map_or(0, |x| x.errors),
+                                None => self.sources.iter().map(|x| x.errors).sum(),
+                            };
+                            if errors > 0 {
+                                row("Corrupt records", fmt_num(errors));
+                            }
+                            row("First event", s.first.clone());
+                            row("Last event", s.last.clone());
+                            let lv: Vec<String> = LEVELS
+                                .iter()
+                                .zip(s.levels)
+                                .filter(|(_, n)| *n > 0)
+                                .map(|((name, _), n)| format!("{name}: {}", fmt_num(n)))
+                                .collect();
+                            row("Levels", lv.join(", "));
+                        });
+                });
 
                 count_section(
                     ui,
@@ -2123,19 +2786,34 @@ impl App {
             ui.label(RichText::new("Windows event log viewer and threat hunting").weak());
             ui.add_space(8.0);
             ui.label(
-                RichText::new("Drop a .evtx file here, double-click one in Finder, or")
+                RichText::new("Drop .evtx files or a folder here, double-click a file in Finder, or")
                     .weak()
                     .size(16.0),
             );
             ui.add_space(8.0);
-            if ui
-                .button(RichText::new("📂 Open file…").size(18.0))
-                .clicked()
-            {
+            ui.horizontal(|ui| {
+                let w = 340.0;
+                ui.add_space((ui.available_width() - w).max(0.0) / 2.0);
                 let ctx = ui.ctx().clone();
-                self.open_dialog(&ctx);
+                if ui.button(RichText::new("📄 Open files…").size(18.0)).clicked() {
+                    self.open_dialog(&ctx);
+                }
+                if ui.button(RichText::new("📁 Open folder…").size(18.0)).clicked() {
+                    self.open_folder_dialog(&ctx);
+                }
+            });
+            if let Some(f) = &self.folder {
+                ui.add_space(16.0);
+                ui.label(
+                    RichText::new(format!(
+                        "{} event logs in {}. Choose the ones to open in the file explorer on the left.",
+                        f.files.len(),
+                        workspace::display_name(&f.path)
+                    ))
+                    .size(15.0),
+                );
             }
-            if let Some(e) = &self.fatal {
+            if let Some(e) = &self.open_error {
                 ui.add_space(16.0);
                 ui.colored_label(Color32::from_rgb(230, 80, 80), e);
             }
@@ -2144,6 +2822,7 @@ impl App {
                 ui.label(RichText::new("Recent").weak());
                 for p in self.settings.recent.iter().take(6) {
                     let name = p.file_name().unwrap_or_default().to_string_lossy();
+                    let name = if p.is_dir() { format!("📁 {name}") } else { name.into_owned() };
                     if ui
                         .link(name)
                         .on_hover_text(p.display().to_string())
@@ -2308,19 +2987,25 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let dropped = ctx.input(|i| i.raw.dropped_files.iter().find_map(|f| f.path.clone()));
-        if let Some(p) = dropped {
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+        for p in dropped {
             self.open(p, ctx);
         }
         #[cfg(target_os = "macos")]
-        if let Some(p) = crate::macos::take_opened().pop() {
+        for p in crate::macos::take_opened() {
             self.open(p, ctx);
         }
 
         self.poll_loader();
         self.poll_sigma();
         self.refresh_view_if_needed(ctx);
-        if self.loader.is_some() || self.view_dirty {
+        if !self.all_loaded() || self.view_dirty {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
         self.handle_keys(ctx);
@@ -2328,13 +3013,22 @@ impl eframe::App for App {
         let mut actions = Vec::new();
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             self.menu_bar(ui, &mut actions);
-            if self.file.is_some() {
+            if !self.sources.is_empty() {
                 self.filter_bar(ui);
             }
         });
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| self.status_bar(ui));
 
-        if self.file.is_none() || (self.records.is_empty() && self.fatal.is_some()) {
+        let has_explorer = self.folder.is_some() || !self.sources.is_empty();
+        egui::SidePanel::left("explorer")
+            .resizable(true)
+            .default_width(290.0)
+            .width_range(200.0..=520.0)
+            .show_animated(ctx, self.show_explorer && has_explorer, |ui| {
+                self.explorer(ui, &mut actions)
+            });
+
+        if self.sources.is_empty() {
             egui::CentralPanel::default().show(ctx, |ui| self.welcome(ui, &mut actions));
         } else {
             egui::TopBottomPanel::bottom("details")
@@ -2375,7 +3069,7 @@ impl eframe::App for App {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, "settings_v3", &self.settings);
+        eframe::set_value(storage, SETTINGS_KEY, &self.settings);
     }
 }
 
@@ -2416,7 +3110,12 @@ fn about_window(ctx: &egui::Context, open: &mut bool) {
         });
 }
 
-fn row_menu(ui: &mut egui::Ui, r: &Record, actions: &mut Vec<Action>) {
+fn row_menu(ui: &mut egui::Ui, r: &Record, multi_file: bool, actions: &mut Vec<Action>) {
+    if multi_file && ui.button("Show only this event's file").clicked() {
+        actions.push(Action::Activate(r.source as usize));
+        actions.push(Action::ScopeActive);
+        ui.close_menu();
+    }
     if ui
         .button(format!("Show only Event ID {}", r.event_id))
         .clicked()
@@ -2448,6 +3147,7 @@ fn row_menu(ui: &mut egui::Ui, r: &Record, actions: &mut Vec<Action>) {
     ui.separator();
     if ui.button("Copy as JSON").clicked() {
         actions.push(Action::CopyRendered(
+            r.source,
             r.chunk,
             r.record_id,
             Render::JsonPretty,
@@ -2455,7 +3155,12 @@ fn row_menu(ui: &mut egui::Ui, r: &Record, actions: &mut Vec<Action>) {
         ui.close_menu();
     }
     if ui.button("Copy as XML").clicked() {
-        actions.push(Action::CopyRendered(r.chunk, r.record_id, Render::Xml));
+        actions.push(Action::CopyRendered(
+            r.source,
+            r.chunk,
+            r.record_id,
+            Render::Xml,
+        ));
         ui.close_menu();
     }
     if ui.button("Copy fields as text").clicked() {
@@ -2677,7 +3382,7 @@ fn fmt_window(secs: i64) -> String {
     }
 }
 
-fn cmp_col(a: &Record, b: &Record, col: usize) -> Ordering {
+fn cmp_col(a: &Record, b: &Record, col: usize, names: &[&str]) -> Ordering {
     fn num(s: &str) -> u64 {
         s.strip_prefix("0x")
             .map(|h| u64::from_str_radix(h, 16).unwrap_or(0))
@@ -2693,6 +3398,9 @@ fn cmp_col(a: &Record, b: &Record, col: usize) -> Ordering {
     match col {
         C_LEVEL => severity(a.level).cmp(&severity(b.level)),
         C_TIME => a.timestamp.cmp(&b.timestamp),
+        C_FILE => names
+            .get(a.source as usize)
+            .cmp(&names.get(b.source as usize)),
         C_RECORD => a.record_id.cmp(&b.record_id),
         C_ERID => num(a.col(Col::EventRecordId)).cmp(&num(b.col(Col::EventRecordId))),
         C_EVENT => a.event_id.cmp(&b.event_id),

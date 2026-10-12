@@ -68,9 +68,19 @@ Add `--universal` for an app that runs on both Apple Silicon and Intel. To run w
 ## Opening logs
 
 - **Double-click** a `.evtx` file in Finder, or right-click it → **Open With → Tidewatch**
-- Drag a `.evtx` file onto the window or the Dock icon
-- **File → Open…** or **⌘O**
+- Drag `.evtx` files or a whole folder onto the window or the Dock icon
+- **File → Open Files…** (⌘O, select several at once) or **File → Open Folder…** (⇧⌘O)
 - **File → Open Recent**, or the recent list on the start screen
+
+### Working with many files
+
+Open a folder (for example a triage collection) and the **file explorer** slides in on the left (toggle it with ⌘B or the 🗂 button). It lists every `.evtx` file in the folder and its subfolders, with sizes.
+
+- **Tick a file** to open it; untick to close it and free its memory. **Open all** / **Close all** do the whole folder.
+- **Click a file's name** to make it the *active* file. Selecting an event in the table also highlights its file.
+- All open files are merged into **one timeline**, and a **File** column shows where each event came from.
+- **Search in: All files / active file.** By default the search, filters, detections view and Log Summary cover every open file. Switch the toolbar's *Search in* control to the active file to look at just that one. Right-click a file (or an event) for **Show only this file**.
+- Detections run across all open files together, so patterns that span machines, like password spraying against several domain controllers, are counted as one.
 
 Rows appear while the file is still loading. Damaged records are skipped and counted in the status bar; hover the count to see the last error.
 

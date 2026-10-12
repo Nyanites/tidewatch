@@ -60,6 +60,8 @@ pub struct Record {
     pub record_id: u64,
     /// Chunk the record lives in, used to re-render its JSON/XML on demand.
     pub chunk: u32,
+    /// Which open file the record came from (index into the app's file list).
+    pub source: u16,
     pub timestamp: Box<str>,
     pub level: u8,
     pub event_id: u32,
@@ -265,6 +267,7 @@ impl Draft {
         Record {
             record_id: self.record_id,
             chunk: self.chunk,
+            source: 0,
             timestamp: self.timestamp.into(),
             level: self.level,
             event_id: self.event_id,
