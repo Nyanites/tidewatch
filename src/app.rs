@@ -83,6 +83,22 @@ enum Detection {
     Rule(usize),
 }
 
+enum UpdateState {
+    Idle,
+    Checking,
+    UpToDate,
+    Available(crate::update::Release),
+    Installing(crate::update::Release),
+    /// Installed; holds the bundle to relaunch.
+    Installed(PathBuf),
+    Failed(String),
+}
+
+enum UpdateMsg {
+    Checked(Result<crate::update::Release, String>),
+    Installed(Result<PathBuf, String>),
+}
+
 /// Which open files the table, search and summary cover.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Scope {
@@ -108,6 +124,10 @@ struct Settings {
     recent: Vec<PathBuf>,
     /// Folder of Sigma rules to import at startup.
     sigma_dir: Option<PathBuf>,
+    /// Check GitHub for a newer version at most once a day.
+    auto_update: bool,
+    /// Unix time of the last automatic update check.
+    last_update_check: u64,
 }
 
 impl Default for Settings {
@@ -118,6 +138,8 @@ impl Default for Settings {
             dark: true,
             recent: Vec::new(),
             sigma_dir: None,
+            auto_update: true,
+            last_update_check: 0,
         }
     }
 }
@@ -229,6 +251,10 @@ pub struct App {
     rendered: Option<(usize, DetailTab, Result<String, String>)>,
     show_summary: bool,
     show_about: bool,
+    // In-app updates.
+    update: UpdateState,
+    update_rx: Option<Receiver<UpdateMsg>>,
+    show_update: bool,
     fields_filter: String,
     focus_search: bool,
     toast: Option<(String, Instant)>,
@@ -310,12 +336,24 @@ impl App {
             rendered: None,
             show_summary: false,
             show_about: false,
+            update: UpdateState::Idle,
+            update_rx: None,
+            show_update: false,
             fields_filter: String::new(),
             focus_search: false,
             toast: None,
         };
         #[cfg(target_os = "macos")]
         crate::macos::set_context(&cc.egui_ctx);
+        crate::update::cleanup();
+        let now = unix_now();
+        if app.settings.auto_update
+            && crate::update::bundle_path().is_some()
+            && now.saturating_sub(app.settings.last_update_check) > 24 * 3600
+        {
+            app.settings.last_update_check = now;
+            app.check_for_update(&cc.egui_ctx);
+        }
         if let Some(dir) = app.settings.sigma_dir.clone() {
             if sigma_import_marker().is_some_and(|m| m.exists()) {
                 // The previous import never finished (the app quit or crashed during it):
@@ -1308,6 +1346,11 @@ impl App {
                     self.show_about = true;
                     ui.close_menu();
                 }
+                if ui.button("Check for Updates…").clicked() {
+                    self.show_update = true;
+                    self.check_for_update(&ctx);
+                    ui.close_menu();
+                }
                 ui.separator();
                 search_help(ui);
             });
@@ -2228,6 +2271,18 @@ impl App {
                     .collect();
                 r.on_hover_text(detail.join("\n"));
             }
+            if let UpdateState::Available(r) = &self.update {
+                ui.separator();
+                if ui
+                    .button(
+                        RichText::new(format!("⬆ Update to {}", r.version))
+                            .color(Color32::from_rgb(110, 160, 255)),
+                    )
+                    .clicked()
+                {
+                    self.show_update = true;
+                }
+            }
             if let Some((msg, at)) = &self.toast {
                 if at.elapsed() < Duration::from_secs(4) {
                     ui.separator();
@@ -2845,6 +2900,171 @@ fn sigma_import_marker() -> Option<PathBuf> {
     eframe::storage_dir("Tidewatch").map(|d| d.join("sigma-import-in-progress"))
 }
 
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+impl App {
+    fn check_for_update(&mut self, ctx: &egui::Context) {
+        if matches!(
+            self.update,
+            UpdateState::Checking | UpdateState::Installing(_)
+        ) {
+            return;
+        }
+        self.update = UpdateState::Checking;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(UpdateMsg::Checked(crate::update::latest()));
+            ctx.request_repaint();
+        });
+        self.update_rx = Some(rx);
+    }
+
+    fn install_update(&mut self, release: crate::update::Release, ctx: &egui::Context) {
+        self.update = UpdateState::Installing(release.clone());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(UpdateMsg::Installed(crate::update::install(&release)));
+            ctx.request_repaint();
+        });
+        self.update_rx = Some(rx);
+    }
+
+    fn poll_update(&mut self) {
+        let Some(rx) = &self.update_rx else { return };
+        let msg = match rx.try_recv() {
+            Ok(m) => m,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                self.update_rx = None;
+                self.update = UpdateState::Failed("the update stopped unexpectedly".into());
+                return;
+            }
+        };
+        self.update_rx = None;
+        self.update = match msg {
+            UpdateMsg::Checked(Ok(r)) if r.is_newer() => UpdateState::Available(r),
+            UpdateMsg::Checked(Ok(_)) => UpdateState::UpToDate,
+            UpdateMsg::Checked(Err(e)) => UpdateState::Failed(e),
+            UpdateMsg::Installed(Ok(bundle)) => UpdateState::Installed(bundle),
+            UpdateMsg::Installed(Err(e)) => UpdateState::Failed(e),
+        };
+    }
+
+    fn update_window(&mut self, ctx: &egui::Context) {
+        if !self.show_update {
+            return;
+        }
+        let mut open = true;
+        let mut action: Option<UpdateAction> = None;
+        egui::Window::new("Software Update")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(460.0)
+            .show(ctx, |ui| {
+                ui.label(RichText::new(format!("You have Tidewatch {}", crate::update::CURRENT)).weak());
+                ui.add_space(6.0);
+                match &self.update {
+                    UpdateState::Idle => {
+                        if ui.button("Check for updates").clicked() {
+                            action = Some(UpdateAction::Check);
+                        }
+                    }
+                    UpdateState::Checking => {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label("Checking GitHub for a newer version…");
+                        });
+                    }
+                    UpdateState::UpToDate => {
+                        ui.label(RichText::new("✔ You're up to date.").strong());
+                        if ui.button("Check again").clicked() {
+                            action = Some(UpdateAction::Check);
+                        }
+                    }
+                    UpdateState::Available(r) => {
+                        ui.label(RichText::new(format!("Tidewatch {} is available", r.version)).strong().size(16.0));
+                        if !r.notes.is_empty() {
+                            ui.add_space(4.0);
+                            egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                                ui.label(&r.notes);
+                            });
+                        }
+                        ui.hyperlink_to("Release page", &r.url);
+                        ui.add_space(6.0);
+                        if crate::update::bundle_path().is_some() {
+                            if ui.button(RichText::new("⬇ Install and restart").strong()).clicked() {
+                                action = Some(UpdateAction::Install(r.clone()));
+                            }
+                            ui.label(
+                                RichText::new("Downloads from GitHub, checks the checksum and signature, then restarts Tidewatch.")
+                                    .weak()
+                                    .small(),
+                            );
+                        } else {
+                            ui.label("This copy isn't running from an app bundle; update with the install command.");
+                        }
+                    }
+                    UpdateState::Installing(r) => {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(format!("Downloading and installing Tidewatch {}…", r.version));
+                        });
+                    }
+                    UpdateState::Installed(_) => {
+                        ui.label(RichText::new("✔ Update installed.").strong());
+                        if ui.button(RichText::new("Restart Tidewatch").strong()).clicked() {
+                            action = Some(UpdateAction::Restart);
+                        }
+                    }
+                    UpdateState::Failed(e) => {
+                        ui.colored_label(Color32::from_rgb(230, 90, 90), format!("Update failed: {e}"));
+                        ui.label(
+                            RichText::new("You can also update by running the install command again.")
+                                .weak()
+                                .small(),
+                        );
+                        if ui.button("Try again").clicked() {
+                            action = Some(UpdateAction::Check);
+                        }
+                    }
+                }
+                ui.add_space(6.0);
+                ui.separator();
+                ui.checkbox(&mut self.settings.auto_update, "Check for updates automatically (once a day)")
+                    .on_hover_text("Only asks GitHub for the latest version number; nothing about you or your logs is sent.");
+            });
+        if !open {
+            self.show_update = false;
+        }
+        match action {
+            Some(UpdateAction::Check) => self.check_for_update(ctx),
+            Some(UpdateAction::Install(r)) => self.install_update(r, ctx),
+            Some(UpdateAction::Restart) => {
+                if let UpdateState::Installed(bundle) = &self.update {
+                    match crate::update::relaunch(bundle) {
+                        Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                        Err(e) => self.update = UpdateState::Failed(e),
+                    }
+                }
+            }
+            None => {}
+        }
+    }
+}
+
+enum UpdateAction {
+    Check,
+    Install(crate::update::Release),
+    Restart,
+}
+
 /// Result of the last Sigma import.
 struct SigmaStatus {
     dir: PathBuf,
@@ -3008,8 +3228,9 @@ impl eframe::App for App {
 
         self.poll_loader();
         self.poll_sigma();
+        self.poll_update();
         self.refresh_view_if_needed(ctx);
-        if !self.all_loaded() || self.view_dirty {
+        if !self.all_loaded() || self.view_dirty || self.update_rx.is_some() {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
         self.handle_keys(ctx);
@@ -3052,6 +3273,7 @@ impl eframe::App for App {
         }
 
         about_window(ctx, &mut self.show_about);
+        self.update_window(ctx);
 
         for a in actions {
             self.apply(a, ctx);

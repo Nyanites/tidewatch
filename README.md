@@ -46,7 +46,7 @@ curl -fsSL https://nyanites.github.io/tidewatch/install.sh | bash
 
 Then open Tidewatch from Launchpad or Applications, or double-click any `.evtx` file.
 
-The [installer](docs/install.sh) downloads the latest release from GitHub, checks it against the published SHA-256 checksum, and copies Tidewatch into Applications. It never asks for your password, and the app opens straight away with no security prompt. Run the same command again to update. To install a specific version, prefix it with `TIDEWATCH_VERSION=0.1.1`.
+The [installer](docs/install.sh) downloads the latest release from GitHub, checks it against the published SHA-256 checksum, and copies Tidewatch into Applications. It never asks for your password, and the app opens straight away with no security prompt. Tidewatch also updates itself: **Help → Check for Updates…** installs a new version in place and restarts (it checks automatically once a day; turn that off in the same window). Running the install command again works too. To install a specific version, prefix it with `TIDEWATCH_VERSION=0.1.1`.
 
 **Uninstall:** drag Tidewatch from Applications to the Trash.
 
@@ -377,7 +377,7 @@ The workflow builds the universal app, packages it as `Tidewatch-<version>.zip` 
 
 **Can it handle large logs?** Yes: 5,039,642 events (3.9 GB) open in 18 seconds and search in about 40 ms. See [Performance](#performance).
 
-**Does it upload my logs?** No. Everything runs locally, with no telemetry or account.
+**Does it upload my logs?** No. Everything runs locally, with no telemetry or account. The only network request Tidewatch makes is a once-a-day check of GitHub for a newer version, which sends nothing about you or your logs and can be turned off.
 
 **Does it run on Windows or Linux?** It runs on macOS 11 or newer (Apple Silicon and Intel). A Windows version is coming soon.
 

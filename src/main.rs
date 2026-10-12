@@ -10,6 +10,7 @@ mod model;
 mod rules;
 mod search;
 mod sigma;
+mod update;
 mod workspace;
 
 use std::path::PathBuf;

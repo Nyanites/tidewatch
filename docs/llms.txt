@@ -9,7 +9,8 @@
 - Imports Sigma rules (about 2,400 Windows rules from SigmaHQ), validated against Sigma's official test logs.
 - Query language with field filters, exclusions, phrases and regex; decodes logon types, Kerberos status codes and well-known SIDs.
 - Exports filtered events to CSV and JSON Lines.
-- Runs entirely locally: no uploads, no telemetry, no account.
+- Runs entirely locally: no uploads, no telemetry, no account. The only network request is an optional daily check of GitHub for updates.
+- Updates itself in place (Help → Check for Updates…), verifying checksum and code signature.
 - Source code is public on GitHub. License: PolyForm Small Business 1.0.0 (free for organizations under 100 people and US$1M revenue; commercial license for larger ones).
 - Install: `curl -fsSL https://nyanites.github.io/tidewatch/install.sh | bash`
 
