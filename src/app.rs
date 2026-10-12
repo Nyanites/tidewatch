@@ -282,6 +282,9 @@ impl App {
         cc.egui_ctx.style_mut(|s| {
             s.spacing.item_spacing = egui::vec2(8.0, 4.0);
             s.spacing.button_padding = egui::vec2(8.0, 3.0);
+            // Solid scroll bars that show whenever content overflows (not only on hover),
+            // so a wide table visibly scrolls sideways.
+            s.spacing.scroll = egui::style::ScrollStyle::solid();
         });
 
         let mut app = Self {
@@ -1319,12 +1322,7 @@ impl App {
                 ui.checkbox(&mut self.show_summary, "Log Summary");
                 ui.separator();
                 ui.label(RichText::new("Columns").weak());
-                for (i, c) in COLS.iter().enumerate() {
-                    ui.checkbox(&mut self.settings.columns[i], c.name);
-                }
-                if ui.button("Reset columns").clicked() {
-                    self.settings.columns = COLS.iter().map(|c| c.default).collect();
-                }
+                column_picker(ui, &mut self.settings.columns, self.sources.len() > 1);
                 ui.separator();
                 let dark = ui.visuals().dark_mode;
                 if ui
@@ -2317,7 +2315,12 @@ impl App {
 
         let mut clicked: Option<usize> = None;
         let mut sort_clicked: Option<usize> = None;
+        // Edited by the header's right-click menu; applied after the table is drawn.
+        let mut columns = self.settings.columns.clone();
 
+        // Leave room for the last (stretching) column and the gaps between columns.
+        let gaps = ui.spacing().item_spacing.x * 2.0 * visible.len() as f32;
+        let room = (ui.available_width() - 160.0 - gaps).max(200.0);
         let mut builder = TableBuilder::new(ui)
             .id_salt(("table", visible.clone()))
             .striped(true)
@@ -2326,11 +2329,20 @@ impl App {
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .min_scrolled_height(0.0)
             .max_scroll_height(f32::INFINITY);
+        // Shrink the starting widths so every enabled column fits in the window (a newly
+        // enabled column would otherwise land off-screen); users can still drag them wider.
+        let fixed: f32 = visible[..visible.len() - 1]
+            .iter()
+            .map(|&c| COLS[c].width)
+            .sum();
+        let scale = (room / fixed).min(1.0);
         for (n, &c) in visible.iter().enumerate() {
             builder = builder.column(if n + 1 == visible.len() {
                 Column::remainder().at_least(80.0)
             } else {
-                Column::initial(COLS[c].width).at_least(40.0).clip(true)
+                Column::initial((COLS[c].width * scale).max(56.0))
+                    .at_least(40.0)
+                    .clip(true)
             });
         }
         if let Some(row) = scroll_target {
@@ -2340,24 +2352,33 @@ impl App {
         builder
             .header(row_height + 2.0, |mut header| {
                 for &c in &visible {
-                    header.col(|ui| {
+                    let (_, cell) = header.col(|ui| {
                         let mut text = COLS[c].name.to_string();
                         if c == self.sort_col {
                             text.push_str(if self.sort_asc { " ⏶" } else { " ⏷" });
                         }
-                        let r = ui.add(
+                        ui.add(
                             egui::Label::new(RichText::new(text).strong())
-                                .sense(egui::Sense::click())
                                 .selectable(false)
                                 .truncate(),
                         );
-                        if c != C_DATA
-                            && c != C_DETECT
-                            && r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
-                        {
-                            sort_clicked = Some(c);
-                        }
                     });
+                    // The cell's own response receives the clicks (it sits on top of its
+                    // contents), so sorting and the column menu hang off it.
+                    cell.context_menu(|ui| {
+                        ui.label(RichText::new("Columns").weak());
+                        column_picker(ui, &mut columns, multi_file);
+                    });
+                    let sortable = c != C_DATA && c != C_DETECT;
+                    let cell = if sortable {
+                        cell.on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text("Click to sort · right-click to choose columns")
+                    } else {
+                        cell.on_hover_text("Right-click to choose columns")
+                    };
+                    if sortable && cell.clicked() {
+                        sort_clicked = Some(c);
+                    }
                 }
             })
             .body(|body| {
@@ -2422,6 +2443,9 @@ impl App {
                 });
             });
 
+        if columns != self.settings.columns {
+            self.settings.columns = columns;
+        }
         if let Some(c) = sort_clicked {
             self.set_sort(c);
         }
@@ -3334,6 +3358,23 @@ fn about_window(ctx: &egui::Context, open: &mut bool) {
             ui.label(RichText::new("Built with").strong());
             ui.label("evtx, egui/eframe, rayon, regex, memchr, serde, yaml_serde, rfd (MIT / Apache-2.0).");
         });
+}
+
+/// Column checkboxes (View menu and the table header's right-click menu).
+fn column_picker(ui: &mut egui::Ui, columns: &mut [bool], multi_file: bool) {
+    for (i, c) in COLS.iter().enumerate() {
+        if i == C_FILE && !multi_file {
+            ui.add_enabled(false, egui::Checkbox::new(&mut columns[i], c.name))
+                .on_disabled_hover_text("Shown when more than one file is open");
+        } else {
+            ui.checkbox(&mut columns[i], c.name);
+        }
+    }
+    if ui.button("Reset columns").clicked() {
+        for (i, c) in COLS.iter().enumerate() {
+            columns[i] = c.default;
+        }
+    }
 }
 
 fn row_menu(ui: &mut egui::Ui, r: &Record, multi_file: bool, actions: &mut Vec<Action>) {
