@@ -2062,7 +2062,11 @@ impl App {
             };
             let text = if active { text.strong() } else { text };
             let avail = (ui.available_width() - 80.0).max(60.0);
-            let fill = if active { ui.visuals().selection.bg_fill } else { Color32::TRANSPARENT };
+            let fill = if active {
+                ui.visuals().selection.bg_fill
+            } else {
+                Color32::TRANSPARENT
+            };
             let r = egui::Frame::none()
                 .fill(fill)
                 .rounding(4.0)
